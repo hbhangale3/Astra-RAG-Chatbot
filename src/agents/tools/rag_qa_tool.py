@@ -21,6 +21,7 @@ embed_model = HuggingFaceEmbedding()
 
 
 #define the RAG QA tool
+@tool
 def rag_query_tool(query: str)-> dict:
     """
      Answers a query by retrieving relevant documents and generating a response.
@@ -101,7 +102,7 @@ def rag_query_tool(query: str)-> dict:
     "source_files": list(source_file_names)
 }
 
-output = rag_query_tool(query="Explain about evolution very briefly in max 2 lines.")
-print(output)
-print(output["answer"])
-print(output["source_files"])
+# output = rag_query_tool(query="Explain about evolution very briefly in max 2 lines.")
+# print(output)
+# print(output["answer"])
+# print(output["source_files"])
