@@ -67,6 +67,17 @@ def rag_query_tool(query: str)-> dict:
         embed_model = embed_model
     )
 
+    retriever = index.as_retriever(similarity_top_k=3)
+    retrieved_nodes = retriever.retrieve(query)
+    # for node in retrieved_nodes:
+    #     print("Score:", node.score)
+    #     print("Source:", node.metadata.get("file_name"))
+    if not retrieved_nodes or retrieved_nodes[0].score < 0.70:
+        return {
+        "answer": "I could not find relevant information in the uploaded documents.",
+        "source_files": []
+        }
+
     #Create the query engine
     query_engine = index.as_query_engine(similarity_top_k=3)
 
@@ -102,7 +113,7 @@ def rag_query_tool(query: str)-> dict:
     "source_files": list(source_file_names)
 }
 
-# output = rag_query_tool(query="Explain about evolution very briefly in max 2 lines.")
+# output = rag_query_tool(query="explain about core components of architecture of a microprocessor briefy in 2 to 3 lines.")
 # print(output)
 # print(output["answer"])
 # print(output["source_files"])
