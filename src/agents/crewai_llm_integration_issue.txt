@@ -1,0 +1,245 @@
+# Astra RAG – CrewAI Agent LLM Integration Debugging Report
+
+## Issue Summary
+
+After successfully building the RAG ingestion pipeline, vector store, retrieval logic, CrewAI agent, task, and crew workflow, the first end-to-end execution of:
+
+```bash
+python3 -m src.agents.check_crew
+```
+
+failed before the agent could invoke the RAG tool.
+
+The execution reached:
+
+```text
+Crew Execution Started
+Task Started
+Agent Started
+```
+
+but failed during the first LLM invocation.
+
+---
+
+## Error Observed
+
+CrewAI raised the following exception:
+
+```text
+litellm.BadRequestError: GroqException
+
+'messages.0' : for 'role:system'
+property 'cache_breakpoint' is unsupported
+```
+
+The stack trace showed the failure occurred inside:
+
+```text
+CrewAI Agent
+    ↓
+LiteLLM
+    ↓
+Groq API
+```
+
+before the RAG tool was executed.
+
+---
+
+## Investigation
+
+The project currently contains two separate LLM integrations:
+
+### 1. CrewAI Agent LLM
+
+Configured in:
+
+```python
+get_llm_for_agent()
+```
+
+Purpose:
+
+```text
+- Understand task instructions
+- Decide which tools to invoke
+- Format final response
+```
+
+---
+
+### 2. RAG Query Tool LLM
+
+Configured inside:
+
+```python
+Settings.llm = Groq(...)
+```
+
+Purpose:
+
+```text
+- Receive retrieved context
+- Generate grounded answers
+- Return answer and source references
+```
+
+---
+
+## Root Cause
+
+The CrewAI agent was configured to use:
+
+```python
+model = "groq/llama-3.1-8b-instant"
+```
+
+through LiteLLM.
+
+During execution, CrewAI generated internal message metadata containing:
+
+```text
+cache_breakpoint
+```
+
+which is supported by some providers but not by the Groq API endpoint being used.
+
+As a result, Groq rejected the request before any tool execution occurred.
+
+The failure was unrelated to:
+
+* ChromaDB
+* LlamaIndex
+* PDF ingestion
+* Retrieval pipeline
+* RAG tool implementation
+
+The issue existed entirely within the CrewAI Agent → Groq integration layer.
+
+---
+
+## Solution
+
+Separate the two responsibilities:
+
+### CrewAI Agent
+
+Use OpenAI:
+
+```python
+LLM(
+    model="openai/gpt-4o-mini",
+    api_key=OPENAI_API_KEY
+)
+```
+
+Responsibilities:
+
+```text
+- Task reasoning
+- Tool selection
+- Response formatting
+```
+
+---
+
+### RAG Query Tool
+
+Continue using Groq:
+
+```python
+Settings.llm = Groq(...)
+```
+
+Responsibilities:
+
+```text
+- Context-aware answer generation
+- Fast RAG inference
+```
+
+---
+
+## Updated Architecture
+
+Before:
+
+```text
+CrewAI Agent
+    ↓
+Groq
+    ↓
+RAG Tool
+    ↓
+Groq
+```
+
+After:
+
+```text
+CrewAI Agent
+    ↓
+OpenAI GPT-4o-mini
+    ↓
+RAG Tool
+    ↓
+LlamaIndex
+    ↓
+Groq Llama 3.1 8B
+```
+
+---
+
+## Benefits
+
+### OpenAI
+
+Used for:
+
+```text
+- Agent orchestration
+- Tool calling
+- Structured output generation
+```
+
+Advantages:
+
+```text
+- Stable CrewAI integration
+- Better tool-calling support
+- Strong structured output handling
+```
+
+---
+
+### Groq
+
+Used for:
+
+```text
+- Retrieval-Augmented Generation
+```
+
+Advantages:
+
+```text
+- Fast inference
+- Lower latency
+- Cost-efficient answer generation
+```
+
+---
+
+## Final Outcome
+
+The issue was traced to an incompatibility between CrewAI/LiteLLM-generated system message metadata and the Groq API endpoint.
+
+By assigning:
+
+```text
+OpenAI → Agent Reasoning
+Groq → RAG Answer Generation
+```
+
+the architecture becomes more robust while preserving Groq for retrieval-based inference and leveraging OpenAI for agent orchestration.
