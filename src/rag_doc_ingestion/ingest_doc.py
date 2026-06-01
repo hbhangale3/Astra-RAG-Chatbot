@@ -5,6 +5,7 @@ from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageCon
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.readers.file import PDFReader
 
 #load our configuration class
 from src.rag_doc_ingestion.config.doc_ingestion_settings import DocIngestionSettings
@@ -36,8 +37,18 @@ def build_vector_store_from_documents():
         collection_name = settings.COLLECTION_NAME
 
         logger.info(f"Loading documents from directory {docs_dir_path}")
-        loader = SimpleDirectoryReader(input_dir=docs_dir_path)
-        documents=loader.load_data()
+        loader = SimpleDirectoryReader(
+            input_dir=docs_dir_path,
+            file_extractor={
+                ".pdf":PDFReader()
+            }
+        )
+        documents = loader.load_data()
+        #debug code to check the loaded documents
+        # print("=" * 100)
+        # print(type(documents[0]))
+        # print(documents[0].metadata)
+        # print(documents[0].text[:3000])
         #now we need to create chunks of the loaded documents
         parser = SimpleNodeParser.from_defaults(chunk_size=1024,chunk_overlap=100)
         nodes = parser.get_nodes_from_documents(documents)

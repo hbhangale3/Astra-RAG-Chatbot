@@ -1,0 +1,198 @@
+# Astra RAG – PDF Ingestion Debugging Report
+
+## Issue Summary
+
+During testing of the Astra RAG retrieval pipeline, the system was successfully retrieving chunks from ChromaDB and sending them to the Groq LLM. Token consumption on the Groq dashboard confirmed that the LLM was being invoked. However, the generated responses contained corrupted output such as:
+
+```text
+OOOOOOOOOOOOOO...
+```
+
+or
+
+```text
+S\x08\x08\x08...
+```
+
+instead of meaningful answers.
+
+Additionally, queries unrelated to the uploaded documents still returned source files, creating confusion regarding whether retrieval was functioning correctly.
+
+---
+
+## Initial Hypotheses
+
+Several potential causes were investigated:
+
+1. Incorrect response parsing from the LlamaIndex Query Engine.
+2. Improper handling of the Groq response object.
+3. Issues with source metadata extraction.
+4. Corrupted vector embeddings.
+5. Retrieval of irrelevant chunks due to lack of similarity thresholding.
+
+Since Groq token usage was increasing and source files were being returned, it was determined that both retrieval and LLM invocation were functioning correctly.
+
+---
+
+## Debugging Process
+
+### Step 1: Inspect Retrieved Sources
+
+The retrieval results were examined using:
+
+```python
+for node in response.source_nodes:
+    print(node.metadata.get("file_name"))
+    print(node.node.get_content())
+```
+
+The retrieved content contained unexpected data such as:
+
+```text
+%PDF-1.7
+obj
+endobj
+stream
+endstream
+FlateDecode
+```
+
+rather than actual document text.
+
+---
+
+### Step 2: Verify Document Loading
+
+Additional debugging was added immediately after document loading:
+
+```python
+print(type(documents[0]))
+print(documents[0].metadata)
+print(documents[0].text[:3000])
+```
+
+Output showed:
+
+```text
+%PDF-1.7
+obj
+endobj
+FlateDecode
+stream
+```
+
+This confirmed that the ingestion pipeline was indexing raw PDF file contents instead of extracted text.
+
+---
+
+### Step 3: Identify Root Cause
+
+The ingestion pipeline was using:
+
+```python
+loader = SimpleDirectoryReader(
+    input_dir=docs_dir_path
+)
+```
+
+Without an explicit PDF parser, the PDF content was not being extracted correctly and ChromaDB was populated with PDF binary structure instead of readable text.
+
+As a result:
+
+```text
+Raw PDF Data
+      ↓
+Chunking
+      ↓
+Embeddings
+      ↓
+ChromaDB
+      ↓
+Retriever
+      ↓
+LLM
+```
+
+The LLM was receiving meaningless PDF internals and therefore generated unusable responses.
+
+---
+
+## Solution
+
+### Install PDF Parsing Dependency
+
+```bash
+uv add pypdf
+```
+
+### Configure Explicit PDF Reader
+
+Updated ingestion code:
+
+```python
+from llama_index.readers.file import PDFReader
+
+loader = SimpleDirectoryReader(
+    input_dir=docs_dir_path,
+    file_extractor={
+        ".pdf": PDFReader()
+    }
+)
+
+documents = loader.load_data()
+```
+
+---
+
+## Verification
+
+After implementing the fix, document inspection produced:
+
+```text
+Steps to create a new project and debug
+
+1. Open Visual Studio installed according to the steps mentioned in the Lab0 document.
+2. Click on Create a New Project.
+3. Choose Empty Project template and click Next.
+...
+```
+
+instead of:
+
+```text
+%PDF-1.7
+obj
+endobj
+stream
+FlateDecode
+```
+
+This confirmed successful PDF text extraction.
+
+---
+
+## Additional Cleanup
+
+Since the original vector database contained corrupted embeddings, the existing ChromaDB storage was deleted and rebuilt:
+
+```bash
+rm -rf <vector_store_directory>
+```
+
+Followed by:
+
+```bash
+python3 -m src.rag_doc_ingestion.ingest_doc
+```
+
+to regenerate embeddings using properly extracted document text.
+
+---
+
+## Final Outcome
+
+The issue was not related to Groq, LlamaIndex Query Engine, ChromaDB retrieval, or response formatting.
+
+The root cause was an incorrectly configured PDF ingestion pipeline that indexed raw PDF structure instead of extracted text.
+
+After introducing an explicit PDFReader and rebuilding the vector store, document content was ingested correctly, enabling meaningful retrieval and generation throughout the Astra RAG pipeline.
