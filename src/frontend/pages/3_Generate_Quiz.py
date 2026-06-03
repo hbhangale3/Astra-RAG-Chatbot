@@ -1,33 +1,177 @@
+import requests
 import streamlit as st
+
+from src.frontend.config.frontend_config import Settings
+
+
+settings = Settings()
 
 st.title("📝 Generate Quiz")
 
 st.markdown(
     """
-    Quiz generation will be connected in the next phase.
-
-    Planned behavior:
-    - Enter a topic
-    - Select number of questions
-    - Generate MCQs from uploaded notes
-    - Mix easy, medium, and hard questions
-    - Show answer key, explanation, and source documents
+    Generate a source-grounded quiz from your uploaded study material.
+    After generation, select your answers and submit the quiz to view your score.
     """
 )
 
-topic = st.text_input("Topic", placeholder="Example: jump statements, loop instructions, CPU scheduling")
-num_questions = st.number_input("Number of questions", min_value=1, max_value=30, value=10)
-question_type = st.selectbox("Question type", ["MCQ", "Fill in the blank", "Mixed"])
-difficulty_mode = st.selectbox("Difficulty mode", ["Balanced", "Easy only", "Medium only", "Hard only"])
+
+def generate_quiz(topic: str, num_questions: int, difficulty: str, question_type: str):
+    """
+    Sends quiz generation request to the backend.
+
+    Returns:
+        dict | None: Quiz response from backend if successful.
+    """
+    payload = {
+        "topic": topic,
+        "num_questions": num_questions,
+        "difficulty": difficulty,
+        "question_type": question_type,
+    }
+
+    try:
+        response = requests.post(
+            settings.QUIZ_GENERATE_URL,
+            json=payload,
+            timeout=300,
+        )
+
+        if response.status_code == 200:
+            return response.json()
+
+        st.error("Quiz generation failed.")
+        st.write(response.json().get("detail", response.text))
+        return None
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"Could not connect to backend: {e}")
+        return None
+
+
+def render_quiz_questions(questions: list):
+    """
+    Renders quiz questions using Streamlit radio buttons.
+
+    Stores selected answers in st.session_state.quiz_answers.
+    """
+    st.session_state.quiz_answers = {}
+
+    for index, question in enumerate(questions):
+        question_number = index + 1
+
+        st.subheader(f"Question {question_number}")
+        st.write(question["question"])
+
+        options = question["options"]
+
+        selected_option = st.radio(
+            label="Choose your answer:",
+            options=list(options.keys()),
+            format_func=lambda option_key: f"{option_key}. {options[option_key]}",
+            key=f"question_{index}",
+        )
+
+        st.session_state.quiz_answers[index] = selected_option
+
+        st.divider()
+
+
+def grade_quiz(questions: list):
+    """
+    Grades the quiz on the frontend.
+
+    MVP note:
+    The correct answers are available on the frontend.
+    This is acceptable for an MVP learning app.
+    In production, grading should happen on the backend.
+    """
+    score = 0
+    total = len(questions)
+
+    st.header("Quiz Results")
+
+    for index, question in enumerate(questions):
+        selected_answer = st.session_state.quiz_answers.get(index)
+        correct_answer = question["correct_answer"]
+
+        is_correct = selected_answer == correct_answer
+
+        if is_correct:
+            score += 1
+
+        st.subheader(f"Question {index + 1}")
+        st.write(question["question"])
+
+        if is_correct:
+            st.success(f"Correct. Your answer: {selected_answer}")
+        else:
+            st.error(
+                f"Incorrect. Your answer: {selected_answer}. "
+                f"Correct answer: {correct_answer}"
+            )
+
+        st.write(f"Explanation: {question['explanation']}")
+        st.caption(f"Source: {question.get('source', 'unknown_source')}")
+
+        st.divider()
+
+    percentage = round((score / total) * 100, 2) if total else 0
+
+    st.metric("Final Score", f"{score}/{total}")
+    st.metric("Percentage", f"{percentage}%")
+
+
+topic = st.text_input(
+    "Topic",
+    placeholder="Example: Java Collections, Spring Boot, Loop Instructions",
+)
+
+num_questions = st.number_input(
+    "Number of questions",
+    min_value=1,
+    max_value=15,
+    value=5,
+)
+
+difficulty = st.selectbox(
+    "Difficulty",
+    ["Easy", "Medium", "Hard"],
+    index=1,
+)
+
+question_type = st.selectbox(
+    "Question type",
+    ["MCQ"],
+)
+
+if "generated_quiz" not in st.session_state:
+    st.session_state.generated_quiz = None
 
 if st.button("Generate Quiz"):
-    st.info("Quiz backend is not connected yet. This page is currently a UI skeleton.")
+    if not topic.strip():
+        st.warning("Please enter a topic.")
+    else:
+        with st.spinner("Generating source-grounded quiz..."):
+            quiz_response = generate_quiz(
+                topic=topic,
+                num_questions=num_questions,
+                difficulty=difficulty,
+                question_type=question_type,
+            )
 
-    st.write(
-        {
-            "topic": topic,
-            "num_questions": num_questions,
-            "question_type": question_type,
-            "difficulty_mode": difficulty_mode,
-        }
-    )
+            if quiz_response:
+                st.session_state.generated_quiz = quiz_response
+                st.success("Quiz generated successfully.")
+
+if st.session_state.generated_quiz:
+    quiz_data = st.session_state.generated_quiz["quiz"]
+    questions = quiz_data.get("questions", [])
+
+    if not questions:
+        st.warning("No quiz questions were generated.")
+    else:
+        render_quiz_questions(questions)
+
+        if st.button("Submit Quiz"):
+            grade_quiz(questions)

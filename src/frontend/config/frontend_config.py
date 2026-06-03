@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     DOCUMENT_LIST_URL: str = "http://localhost:8000/documents/list"
     DOCUMENT_STORAGE_URL: str = "http://localhost:8000/documents/storage"
     DOCUMENT_DELETE_BASE_URL: str = "http://localhost:8000/documents"
+    QUIZ_GENERATE_URL: str = "http://localhost:8000/quiz/generate"
 
     class Config:
         env_file = ".env"
