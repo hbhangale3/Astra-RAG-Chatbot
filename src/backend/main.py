@@ -1,6 +1,7 @@
 import logging
 from fastapi import FastAPI
 from src.backend.api.chat import router as chat_router
+from src.backend.api.document_router import router as document_router
 from src.backend.config.backend_settings import BackendSettings
 
 logging.basicConfig(
@@ -10,6 +11,7 @@ logging.basicConfig(
 
 app = FastAPI()
 app.include_router(chat_router)
+app.include_router(document_router)
 
 settings = BackendSettings()
 

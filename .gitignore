@@ -14,3 +14,4 @@ wheels/
 .dockerignore
 Docs/
 vectorDB/
+data/
