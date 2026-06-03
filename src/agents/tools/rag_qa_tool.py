@@ -1,5 +1,7 @@
+from itertools import count
 import logging
 from urllib import response
+# from chromadb.app import settings
 from crewai.tools import tool
 from llama_index.core import VectorStoreIndex, StorageContext
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -44,6 +46,10 @@ def rag_query_tool(query: str)-> dict:
     vector_store_path = settings.VECTOR_STORE_DIR
     collection_name = settings.COLLECTION_NAME
 
+    #debug
+    print(f"[RETRIEVAL] VECTOR_STORE_DIR = {settings.VECTOR_STORE_DIR}")
+    print(f"[RETRIEVAL] COLLECTION_NAME = {settings.COLLECTION_NAME}")
+
     #configure LLm
     Settings.llm = Groq(
         model = settings.MODEL_NAME,
@@ -53,8 +59,25 @@ def rag_query_tool(query: str)-> dict:
 
 #load Chroma collection
     db = chromadb.PersistentClient(path=vector_store_path)
-    chroma_collection = db.get_or_create_collection(name=collection_name)
+    # chroma_collection = db.get_or_create_collection(name=collection_name)
+    #check if the collection exists, if not return an error message
+    try:
+        chroma_collection = db.get_collection(name=collection_name)    
+    except Exception:
+        return {
+        "answer": "Vector collection not found. Please run document ingestion first or verify VECTOR_STORE_DIR.",
+        "source_files": []
+        }
+    
+    #important to check if any doc was ingested or not, because if no doc was ingested then the collection will be empty and it will throw an error while creating the vector store index, so we need to check the count of the collection before creating the index
+    count = chroma_collection.count()
+    print(f"[RETRIEVAL] Collection count = {count}")
 
+    if count == 0:
+        return {
+        "answer": "No documents have been ingested yet. The vector database is empty.",
+        "source_files": []
+    }
     #connect to the vector store
     vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)

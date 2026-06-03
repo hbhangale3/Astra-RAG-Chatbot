@@ -6,6 +6,7 @@ from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.readers.file import PDFReader
+from numpy import rint
 
 #load our configuration class
 from src.rag_doc_ingestion.config.doc_ingestion_settings import DocIngestionSettings
@@ -36,6 +37,11 @@ def build_vector_store_from_documents():
         vector_store_path = settings.VECTOR_STORE_DIR
         collection_name = settings.COLLECTION_NAME
 
+        #debug code to check the loaded settings
+        print(f"[INGESTION] DOCUMENTS_DIR = {settings.DOCUMENTS_DIR}")
+        print(f"[INGESTION] VECTOR_STORE_DIR = {settings.VECTOR_STORE_DIR}")
+        print(f"[INGESTION] COLLECTION_NAME = {settings.COLLECTION_NAME}")
+        
         logger.info(f"Loading documents from directory {docs_dir_path}")
         loader = SimpleDirectoryReader(
             input_dir=docs_dir_path,

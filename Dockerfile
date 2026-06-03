@@ -1,31 +1,28 @@
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    build-essential \
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV UV_LINK_MODE=copy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
-RUN pip install uv
+RUN pip install --no-cache-dir uv
 
-# Copy dependency files first
-COPY pyproject.toml uv.lock* ./
+COPY pyproject.toml uv.lock ./
 
-# Install Python dependencies
-RUN uv sync --frozen || uv sync
+RUN uv sync --frozen
 
-# Copy project files
-COPY . .
+COPY src ./src
+COPY run_astra.sh ./run_astra.sh
 
-# Expose backend and frontend ports
+RUN chmod +x run_astra.sh
+
 EXPOSE 8000
 EXPOSE 8501
 
-# Make startup script executable
-RUN chmod +x run_astra.sh
-
-# Start full app
-CMD ["./run_astra.sh"]
+CMD ["bash", "run_astra.sh"]

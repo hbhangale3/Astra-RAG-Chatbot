@@ -1,0 +1,983 @@
+Below is a clean documentation-style sequence of everything we debugged, what failed, what we tried, and what finally worked. You can add this to your project notes, README, or a `docs/debugging-docker-rag.md` file.
+
+---
+
+# AstraRAG Dockerization Debugging Notes
+
+## Objective
+
+The AstraRAG application was working correctly in the local Python environment, but issues started appearing after containerizing the project with Docker.
+
+The goal was to make Docker execution behave exactly like local execution:
+
+```text
+Same source code
+Same documents
+Same ChromaDB vector store
+Same environment variables
+Same RAG response quality
+```
+
+---
+
+# 1. Local RAG pipeline was working correctly
+
+## Initial status
+
+The application worked locally using:
+
+```bash
+python3 -m src.rag_doc_ingestion.ingest_doc
+python3 -m src.backend.main
+streamlit run src/frontend/app.py
+```
+
+The local pipeline successfully performed:
+
+```text
+PDF ingestion
+Text chunking
+Embedding generation
+ChromaDB persistence
+RAG retrieval
+Groq-based answer generation
+CrewAI final response formatting
+Streamlit response rendering
+```
+
+## Important conclusion
+
+Since the local version was stable, the core RAG logic was not treated as broken. The debugging focus shifted to:
+
+```text
+Docker environment
+Runtime paths
+Environment variable parsing
+Container dependency setup
+Persistent vector store mounting
+```
+
+---
+
+# 2. PDF ingestion issue: raw PDF binary instead of text
+
+## Problem
+
+During early debugging, documents were loaded but the extracted content looked like raw PDF binary:
+
+```text
+%PDF-1.7
+...
+endobj
+```
+
+instead of readable text.
+
+## Root cause
+
+The PDF reader was not extracting text correctly.
+
+This caused the pipeline to behave like:
+
+```text
+PDF binary
+   ↓
+Chunking
+   ↓
+Embeddings
+   ↓
+Garbage vectors in ChromaDB
+```
+
+## What worked
+
+We inspected the loaded document content directly before embedding.
+
+After fixing the extraction issue, the document content became readable text.
+
+Then we deleted/rebuilt the vector store and re-ran ingestion.
+
+## Final lesson
+
+Before blaming the LLM or vector DB, always validate:
+
+```text
+PDF → readable text → chunks → embeddings
+```
+
+---
+
+# 3. Empty RAG responses despite retrieval working
+
+## Problem
+
+Sometimes the RAG tool returned:
+
+```python
+{
+    "answer": "",
+    "source_files": ["Visual_studio_guide.pdf"]
+}
+```
+
+## Observation
+
+Retrieval scores showed that vector search was working. For example, retrieved nodes had similarity scores and source files.
+
+## Root cause
+
+The retriever was returning chunks, but the LLM generation step sometimes returned an empty response.
+
+This showed the difference between:
+
+```text
+Retriever working
+```
+
+and:
+
+```text
+Query engine / LLM generation working
+```
+
+## What worked
+
+We separated the debugging mentally into two layers:
+
+```text
+Retriever:
+query → vector search → relevant chunks
+
+Query Engine:
+query → retrieved chunks → LLM-generated answer
+```
+
+This helped isolate whether failures were retrieval failures or generation failures.
+
+---
+
+# 4. CrewAI + Groq integration issue
+
+## Problem
+
+CrewAI failed when trying to use Groq directly:
+
+```text
+Unable to initialize LLM with model 'groq/llama-3.1-8b-instant'
+```
+
+## Root cause
+
+CrewAI had integration issues with Groq/LiteLLM in the project dependency setup.
+
+## What was tried
+
+We attempted to add LiteLLM support.
+
+But CrewAI + Groq was still less reliable than CrewAI + OpenAI.
+
+## Final decision
+
+We used a hybrid LLM architecture:
+
+```text
+CrewAI Agent Orchestration → OpenAI
+RAG Answer Generation      → Groq
+```
+
+## Why this worked
+
+CrewAI behaved more reliably with OpenAI for:
+
+```text
+tool invocation
+agent execution
+structured output conversion
+Pydantic output formatting
+```
+
+Groq remained useful for the RAG answer-generation layer.
+
+---
+
+# 5. OpenAI structured output model issue
+
+## Problem
+
+After fixing local execution, the RAG tool returned a valid answer, but CrewAI failed afterward with:
+
+```text
+Invalid parameter: 'response_format' of type 'json_schema' is not supported with this model.
+```
+
+## Root cause
+
+CrewAI was trying to convert the final response into a Pydantic model using OpenAI structured outputs.
+
+The OpenAI model being used did not support `response_format=json_schema`.
+
+Most likely, the CrewAI agent was using:
+
+```text
+gpt-3.5-turbo
+```
+
+or another model that did not support structured outputs.
+
+## What worked
+
+We changed the CrewAI OpenAI model to:
+
+```text
+gpt-4o-mini
+```
+
+After that, Pydantic structured output conversion worked correctly.
+
+## Final lesson
+
+If CrewAI task uses Pydantic structured output, use a model that supports OpenAI structured outputs.
+
+---
+
+# 6. Docker `.env` formatting issue
+
+## Problem
+
+Docker failed or behaved unexpectedly when `.env` values had spaces around `=`.
+
+Example problematic format:
+
+```env
+GROQ_API_KEY = abc123
+```
+
+## Root cause
+
+Docker’s `--env-file` parser is stricter than `python-dotenv`.
+
+## What worked
+
+Use this format:
+
+```env
+GROQ_API_KEY=abc123
+OPENAI_API_KEY=abc123
+```
+
+No spaces around `=`.
+
+## Final lesson
+
+For Docker `.env` files:
+
+```text
+No spaces around =
+Use absolute paths
+Avoid unnecessary quotes around model names
+```
+
+---
+
+# 7. Quoted model name caused Groq model-not-found error
+
+## Problem
+
+In `.env.docker`, the model name was set like this:
+
+```env
+MODEL_NAME="llama-3.3-70b-versatile"
+```
+
+Docker passed the quotes literally to Groq.
+
+Groq rejected the model:
+
+```text
+The model `"llama-3.3-70b-versatile"` does not exist or you do not have access to it.
+```
+
+## Root cause
+
+The model string contained literal quotes.
+
+Instead of sending:
+
+```text
+llama-3.3-70b-versatile
+```
+
+the app sent:
+
+```text
+"llama-3.3-70b-versatile"
+```
+
+## What worked
+
+In `.env.docker`, we removed quotes:
+
+```env
+MODEL_NAME=llama-3.1-8b-instant
+```
+
+We also planned to sanitize model names in code using:
+
+```python
+value.strip().strip('"').strip("'").strip("`")
+```
+
+## Final lesson
+
+For Docker env files, use:
+
+```env
+MODEL_NAME=llama-3.1-8b-instant
+```
+
+and sanitize config values defensively.
+
+---
+
+# 8. Docker path mismatch created multiple vector stores
+
+## Problem
+
+Docker produced different ChromaDB paths:
+
+```text
+/app/vectorDB
+/app/"./vectorDB"
+```
+
+One vector store was large and valid. Another was tiny and empty.
+
+## Root cause
+
+The app was using relative/quoted path values inconsistently.
+
+Example problematic values:
+
+```env
+VECTOR_STORE_DIR="./vectorDB"
+```
+
+Inside Docker, this could be interpreted literally and create a folder such as:
+
+```text
+/app/"./vectorDB"
+```
+
+## Symptoms
+
+Local query worked.
+
+Docker query returned:
+
+```text
+The knowledge source does not contain the required information.
+```
+
+even though documents and vectorDB existed.
+
+## What worked
+
+We changed Docker env paths to absolute paths:
+
+```env
+DOCUMENTS_DIR=/app/Docs
+VECTOR_STORE_DIR=/app/vectorDB
+```
+
+We added path debug prints:
+
+```text
+[INGESTION] DOCUMENTS_DIR = ...
+[INGESTION] VECTOR_STORE_DIR = ...
+[RETRIEVAL] VECTOR_STORE_DIR = ...
+[RETRIEVAL] COLLECTION_NAME = ...
+```
+
+We also mounted local folders into Docker:
+
+```bash
+-v "$(pwd)/Docs:/app/Docs"
+-v "$(pwd)/vectorDB:/app/vectorDB"
+```
+
+## Final lesson
+
+For Docker, always use absolute internal paths:
+
+```text
+/app/Docs
+/app/vectorDB
+```
+
+---
+
+# 9. `get_or_create_collection()` hid vector-store bugs
+
+## Problem
+
+During retrieval, the code used:
+
+```python
+get_or_create_collection()
+```
+
+## Why this was risky
+
+If Docker pointed to the wrong Chroma path, `get_or_create_collection()` silently created a new empty collection.
+
+That made the problem look like:
+
+```text
+retrieval found no context
+```
+
+instead of the real issue:
+
+```text
+retrieval is reading the wrong vector store
+```
+
+## What worked
+
+During retrieval, we replaced:
+
+```python
+db.get_or_create_collection(name=collection_name)
+```
+
+with:
+
+```python
+db.get_collection(name=collection_name)
+```
+
+We also added:
+
+```python
+collection.count()
+```
+
+and printed:
+
+```text
+[RETRIEVAL] Collection count = 4128
+```
+
+## Final lesson
+
+Use:
+
+```text
+get_or_create_collection() → ingestion only
+get_collection()           → retrieval only
+```
+
+This makes path/vector-store bugs visible.
+
+---
+
+# 10. Docker image copied local `.venv`
+
+## Problem
+
+Docker logs showed:
+
+```text
+warning: Ignoring existing virtual environment linked to non-existent Python interpreter
+Removed virtual environment at: .venv
+Creating virtual environment at: .venv
+Installed 194 packages
+```
+
+## Root cause
+
+The Docker image copied the local Mac `.venv` into the Linux container.
+
+The Mac virtual environment was invalid inside Linux, so `uv` deleted and recreated it at container startup.
+
+## Why this was bad
+
+The container was installing dependencies during runtime instead of during image build.
+
+Bad runtime flow:
+
+```text
+docker run
+   ↓
+detect broken copied .venv
+   ↓
+delete .venv
+   ↓
+create new .venv
+   ↓
+install 194 packages
+   ↓
+start app
+```
+
+This made Docker startup slow and unreliable.
+
+## What worked
+
+We added a `.dockerignore` file:
+
+```dockerignore
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+
+.env
+.env.docker
+
+.git
+.gitignore
+
+Docs
+vectorDB
+
+.DS_Store
+*.log
+```
+
+This prevented Docker from copying local environment artifacts.
+
+## Final lesson
+
+Never copy local `.venv` into Docker.
+
+---
+
+# 11. `uv run` at container startup caused runtime environment recreation
+
+## Problem
+
+The container command used:
+
+```bash
+uv run bash run_astra.sh
+```
+
+and the script also used `uv run`.
+
+This caused `uv` to inspect or recreate the environment at runtime.
+
+## What worked
+
+We changed the Dockerfile to install dependencies at build time:
+
+```dockerfile
+RUN uv sync --frozen
+```
+
+Then we changed the container command to:
+
+```dockerfile
+CMD ["bash", "run_astra.sh"]
+```
+
+Inside `run_astra.sh`, we used direct `.venv` binaries:
+
+```bash
+.venv/bin/python -m src.backend.main
+.venv/bin/streamlit run src/frontend/app.py --server.address=0.0.0.0 --server.port=8501
+```
+
+## Final lesson
+
+Docker images should install dependencies during build, not during container startup.
+
+---
+
+# 12. Dockerfile cleanup
+
+## Problem
+
+The Dockerfile copied too much using:
+
+```dockerfile
+COPY . .
+```
+
+This copied unnecessary files:
+
+```text
+.venv
+Docs
+vectorDB
+.env
+local cache files
+```
+
+## What worked
+
+We changed the Dockerfile to copy only required files:
+
+```dockerfile
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen
+
+COPY src ./src
+COPY run_astra.sh ./run_astra.sh
+```
+
+## Final lesson
+
+Only copy application code into the image. Mount data folders at runtime.
+
+---
+
+# 13. Streamlit binding issue
+
+## Problem
+
+Streamlit inside Docker needs to bind to all interfaces.
+
+If Streamlit binds only to localhost inside the container, the host machine may not access it correctly.
+
+## What worked
+
+We started Streamlit with:
+
+```bash
+.venv/bin/streamlit run src/frontend/app.py \
+  --server.address=0.0.0.0 \
+  --server.port=8501
+```
+
+## Final lesson
+
+Inside Docker, bind servers to:
+
+```text
+0.0.0.0
+```
+
+not only localhost.
+
+---
+
+# 14. Docker-mounted volume strategy
+
+## Final Docker run command
+
+The working Docker run command used mounted volumes:
+
+```bash
+docker run --env-file .env.docker \
+  -v "$(pwd)/Docs:/app/Docs" \
+  -v "$(pwd)/vectorDB:/app/vectorDB" \
+  -p 8000:8000 \
+  -p 8501:8501 \
+  astra-rag
+```
+
+## Why this worked
+
+The app used the same persistent document and vector-store folders as local execution, but mapped them into Docker paths:
+
+```text
+Local Docs      → /app/Docs
+Local vectorDB  → /app/vectorDB
+```
+
+This fixed the state mismatch between local and Docker.
+
+---
+
+# 15. Temporary Groq/LlamaIndex generation instability
+
+## Problem
+
+Before the Docker runtime cleanup, the RAG tool sometimes returned:
+
+```text
+\x17\x17\x17...
+```
+
+or:
+
+```text
+0 0 0 0 0...
+```
+
+instead of readable English.
+
+## Observation
+
+The vector store was being read correctly:
+
+```text
+[RETRIEVAL] Collection count = 4128
+```
+
+So the issue was not ChromaDB path access.
+
+## Suspected cause
+
+The Docker runtime was not clean because:
+
+```text
+local .venv was copied
+uv recreated dependencies at runtime
+environment differed from local execution
+```
+
+## What eventually worked
+
+After cleaning the Docker environment:
+
+```text
+added .dockerignore
+stopped copying .venv
+installed dependencies at build time
+stopped using uv run at startup
+used direct .venv binaries
+mounted Docs and vectorDB explicitly
+```
+
+the app started working reliably.
+
+## Final lesson
+
+Before modifying RAG logic, first make Docker deterministic.
+
+---
+
+# Final working Docker approach
+
+## `.env.docker`
+
+```env
+GROQ_API_KEY=your_groq_key
+OPENAI_API_KEY=your_openai_key
+
+DOCUMENTS_DIR=/app/Docs
+VECTOR_STORE_DIR=/app/vectorDB
+COLLECTION_NAME=document_collection
+
+MODEL_NAME=llama-3.1-8b-instant
+MODEL_TEMPERATURE=0.2
+
+CHAT_ENDPOINT_URL=http://localhost:8000/chat/answer
+```
+
+## `.dockerignore`
+
+```dockerignore
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+
+.env
+.env.docker
+
+.git
+.gitignore
+
+Docs
+vectorDB
+
+.DS_Store
+*.log
+```
+
+## Dockerfile
+
+```dockerfile
+FROM python:3.13-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV UV_LINK_MODE=copy
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir uv
+
+COPY pyproject.toml uv.lock ./
+
+RUN uv sync --frozen
+
+COPY src ./src
+COPY run_astra.sh ./run_astra.sh
+
+RUN chmod +x run_astra.sh
+
+EXPOSE 8000
+EXPOSE 8501
+
+CMD ["bash", "run_astra.sh"]
+```
+
+## `run_astra.sh`
+
+```bash
+#!/bin/bash
+set -e
+
+echo "======================================="
+echo "Starting Astra RAG Chatbot"
+echo "======================================="
+
+echo "DOCUMENTS_DIR=$DOCUMENTS_DIR"
+echo "VECTOR_STORE_DIR=$VECTOR_STORE_DIR"
+echo "COLLECTION_NAME=$COLLECTION_NAME"
+echo "MODEL_NAME=$MODEL_NAME"
+
+if [ ! -d "$VECTOR_STORE_DIR" ] || [ -z "$(ls -A "$VECTOR_STORE_DIR" 2>/dev/null)" ]; then
+  echo "Vector store not found or empty. Running ingestion..."
+  .venv/bin/python -m src.rag_doc_ingestion.ingest_doc
+else
+  echo "Vector store already exists. Skipping ingestion."
+fi
+
+echo "Starting FastAPI backend..."
+.venv/bin/python -m src.backend.main &
+
+sleep 3
+
+echo "Starting Streamlit frontend..."
+.venv/bin/streamlit run src/frontend/app.py \
+  --server.address=0.0.0.0 \
+  --server.port=8501
+```
+
+## Build command
+
+```bash
+docker build --no-cache -t astra-rag .
+```
+
+## Run command
+
+```bash
+docker run --env-file .env.docker \
+  -v "$(pwd)/Docs:/app/Docs" \
+  -v "$(pwd)/vectorDB:/app/vectorDB" \
+  -p 8000:8000 \
+  -p 8501:8501 \
+  astra-rag
+```
+
+---
+
+# Final successful behavior
+
+After the fixes, Docker no longer showed:
+
+```text
+Ignoring existing virtual environment
+Removed virtual environment
+Creating virtual environment
+Installed 194 packages
+```
+
+Instead, the container started cleanly and used the already-built virtual environment inside the image.
+
+The app successfully ran:
+
+```text
+FastAPI backend on port 8000
+Streamlit frontend on port 8501
+ChromaDB persistent vector store through mounted volume
+Groq RAG generation
+CrewAI/OpenAI final answer formatting
+```
+
+---
+
+# Key lessons learned
+
+## RAG debugging checklist
+
+```text
+1. Verify PDF text extraction.
+2. Verify chunks contain readable text.
+3. Verify embeddings are generated.
+4. Verify ChromaDB collection exists.
+5. Verify collection count is non-zero.
+6. Verify retriever returns relevant nodes.
+7. Verify LLM generation returns readable English.
+8. Verify CrewAI output conversion works.
+```
+
+## Docker debugging checklist
+
+```text
+1. Do not copy .venv into Docker.
+2. Use .dockerignore.
+3. Install dependencies at image build time.
+4. Do not run uv sync during container startup.
+5. Use absolute paths inside Docker.
+6. Mount Docs and vectorDB as volumes.
+7. Use get_collection during retrieval.
+8. Print resolved paths during ingestion/retrieval.
+9. Bind Streamlit to 0.0.0.0.
+10. Keep Docker .env syntax strict.
+```
+
+## Architecture decision retained
+
+```text
+CrewAI orchestration → OpenAI gpt-4o-mini
+RAG answer generation → Groq llama-3.1-8b-instant
+Vector store → local ChromaDB
+Frontend → Streamlit
+Backend → FastAPI
+```
+
+---
+
+# Final conclusion
+
+The Docker problem was not caused by the RAG logic itself.
+
+The actual root causes were:
+
+```text
+invalid copied local .venv
+runtime dependency recreation
+relative/quoted vectorDB paths
+Docker env parsing differences
+wrong model-name quoting
+retrieval collection creation hiding bugs
+```
+
+The final fix was to make Docker deterministic:
+
+```text
+clean Docker context
+dependencies installed during build
+absolute mounted paths
+separate .env.docker
+direct .venv execution
+persistent Docs/vectorDB mounts
+```
+
+Now the project has a stable Docker baseline and is ready for the next feature phase:
+
+```text
+multi-page Streamlit
+document upload
+MarkItDown ingestion
+chat with notes
+quiz generation
+storage quota
+authentication
+Prometheus/Grafana
+GCP deployment
+```
