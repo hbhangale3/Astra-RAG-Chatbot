@@ -15,41 +15,41 @@ st.markdown(
     """
 )
 
-uploaded_file = st.file_uploader(
-    "Upload a PDF document",
+uploaded_files = st.file_uploader(
+    "Upload PDF documents",
     type=["pdf"],
-    accept_multiple_files=False,
+    accept_multiple_files=True,
 )
 
 if st.button("Upload and Ingest"):
-    if uploaded_file is None:
-        st.warning("Please select a PDF file first.")
+    if not uploaded_files:
+        st.warning("Please select at least one PDF file first.")
     else:
-        with st.spinner("Uploading and ingesting document..."):
-            files = {
-                "file": (
-                    uploaded_file.name,
-                    uploaded_file.getvalue(),
-                    "application/pdf",
-                )
-            }
+        for uploaded_file in uploaded_files:
+            with st.spinner(f"Uploading and ingesting {uploaded_file.name}..."):
+                files = {
+                    "file": (
+                        uploaded_file.name,
+                        uploaded_file.getvalue(),
+                        "application/pdf",
+                    )
+                }
 
-            try:
-                response = requests.post(
-                    settings.DOCUMENT_UPLOAD_URL,
-                    files=files,
-                    timeout=300,
-                )
+                try:
+                    response = requests.post(
+                        settings.DOCUMENT_UPLOAD_URL,
+                        files=files,
+                        timeout=300,
+                    )
 
-                if response.status_code == 200:
-                    st.success("Document uploaded and ingested successfully.")
-                    st.json(response.json())
-                else:
-                    st.error("Upload failed.")
-                    st.write(response.text)
+                    if response.status_code == 200:
+                        st.success(f"{uploaded_file.name} uploaded and ingested successfully.")
+                    else:
+                        st.error(f"Upload failed for {uploaded_file.name}.")
+                        st.write(response.text)
 
-            except requests.exceptions.RequestException as e:
-                st.error(f"Could not connect to backend: {e}")
+                except requests.exceptions.RequestException as e:
+                    st.error(f"Could not connect to backend for {uploaded_file.name}: {e}")
 
 st.divider()
 

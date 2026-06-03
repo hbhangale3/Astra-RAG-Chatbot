@@ -154,7 +154,7 @@ def build_vector_store_from_uploaded_documents(
             vector_store=vector_store,
             embed_model=embed_model
         )
-
+        logger.info(f"Uploaded Chroma collection count after ingestion: {chroma_collection.count()}")
         logger.info("Uploaded document vector store built successfully")
         return 0
 
