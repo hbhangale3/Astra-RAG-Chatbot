@@ -15,6 +15,38 @@ st.markdown(
     """
 )
 
+def save_quiz_attempt(topic: str, difficulty: str, question_type: str, score: int, total: int, percentage: float, questions: list):
+    """
+    Saves the completed quiz attempt to the backend.
+
+    This allows the Dashboard page to show quiz history and score metrics.
+    """
+    payload = {
+        "topic": topic,
+        "difficulty": difficulty,
+        "question_type": question_type,
+        "score": score,
+        "total_questions": total,
+        "percentage": percentage,
+        "questions": questions,
+    }
+
+    try:
+        response = requests.post(
+            settings.QUIZ_ATTEMPTS_URL,
+            json=payload,
+            timeout=30,
+        )
+
+        if response.status_code == 200:
+            st.success("Quiz attempt saved to history.")
+        else:
+            st.warning("Quiz was graded, but attempt could not be saved.")
+            st.write(response.text)
+
+    except requests.exceptions.RequestException as e:
+        st.warning(f"Quiz was graded, but backend save failed: {e}")
+
 
 def generate_quiz(topic: str, num_questions: int, difficulty: str, question_type: str):
     """
@@ -121,6 +153,15 @@ def grade_quiz(questions: list):
     st.metric("Final Score", f"{score}/{total}")
     st.metric("Percentage", f"{percentage}%")
 
+    save_quiz_attempt(
+    topic=st.session_state.generated_quiz["topic"],
+    difficulty=st.session_state.generated_quiz["difficulty"],
+    question_type=st.session_state.generated_quiz["question_type"],
+    score=score,
+    total=total,
+    percentage=percentage,
+    questions=questions,
+)
 
 topic = st.text_input(
     "Topic",

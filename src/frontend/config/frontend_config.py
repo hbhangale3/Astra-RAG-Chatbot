@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     DOCUMENT_STORAGE_URL: str = "http://localhost:8000/documents/storage"
     DOCUMENT_DELETE_BASE_URL: str = "http://localhost:8000/documents"
     QUIZ_GENERATE_URL: str = "http://localhost:8000/quiz/generate"
-
+    QUIZ_ATTEMPTS_URL: str = "http://localhost:8000/quiz/attempts"
+    QUIZ_SUMMARY_URL: str = "http://localhost:8000/quiz/summary"
+    
     class Config:
         env_file = ".env"
         extra="allow"
