@@ -3,8 +3,11 @@ import streamlit as st
 
 from src.frontend.config.frontend_config import Settings
 
+from src.frontend.auth.auth_manager import require_login
 
 settings = Settings()
+username = require_login()
+
 
 st.title("📊 Dashboard")
 
@@ -20,7 +23,7 @@ def fetch_document_data():
     Fetches uploaded document list and storage usage from the backend.
     """
     try:
-        response = requests.get(settings.DOCUMENT_LIST_URL, timeout=30)
+        response = requests.get(settings.DOCUMENT_LIST_URL, params={"user_id": username}, timeout=30)
 
         if response.status_code == 200:
             return response.json()
@@ -38,7 +41,7 @@ def fetch_quiz_summary():
     Fetches quiz performance metrics from the backend.
     """
     try:
-        response = requests.get(settings.QUIZ_SUMMARY_URL, timeout=30)
+        response = requests.get(settings.QUIZ_SUMMARY_URL,params={"user_id": username}, timeout=30)
 
         if response.status_code == 200:
             return response.json().get("summary", {})

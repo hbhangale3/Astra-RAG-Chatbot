@@ -1,0 +1,14 @@
+credentials:
+  usernames:
+    harsh:
+      email: harsh@example.com
+      name: Harsh Bhangale
+      password: studybuddy123
+
+cookie:
+  name: study_buddy_auth
+  key: study_buddy_signature_key
+  expiry_days: 7
+
+preauthorized:
+  emails: []

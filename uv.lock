@@ -193,7 +193,9 @@ dependencies = [
     { name = "pypdf" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
+    { name = "pyyaml" },
     { name = "streamlit" },
+    { name = "streamlit-authenticator" },
     { name = "uvicorn" },
 ]
 
@@ -212,7 +214,9 @@ requires-dist = [
     { name = "pypdf", specifier = ">=6.12.2" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
     { name = "python-multipart", specifier = ">=0.0.30" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "streamlit", specifier = ">=1.58.0" },
+    { name = "streamlit-authenticator", specifier = ">=0.4.2" },
     { name = "uvicorn", specifier = ">=0.48.0" },
 ]
 
@@ -360,6 +364,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f4/8b/0d3945a13955303b81272f759a0331e54c5c793da455e6f5706b89d2639c/cachetools-7.1.4.tar.gz", hash = "sha256:437f55a4e0c1b01a4f3077cc470e6991d47430970e36fbcb77e2be0df4fc1cd6", size = 40085, upload-time = "2026-05-21T22:40:43.376Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/8c/7b/1fc1c09cc0756cf25861a3be10565915953876da48bb228fb9a672b20a42/cachetools-7.1.4-py3-none-any.whl", hash = "sha256:323dc4127934744db5b54eb4924482d7edafbf9554e820d1531c2e08c0e4ef54", size = 16761, upload-time = "2026-05-21T22:40:41.845Z" },
+]
+
+[[package]]
+name = "captcha"
+version = "0.7.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pillow" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b4/65/8e186bb798f33ba390eab897c995b0fcee92bc030e0f40cb8ea01f34dd07/captcha-0.7.1.tar.gz", hash = "sha256:a1b462bcc633a64d8db5efa7754548a877c698d98f87716c620a707364cabd6b", size = 226561, upload-time = "2025-03-01T05:00:13.395Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/da/ff/3f0982ecd37c2d6a7266c22e7ea2e47d0773fe449984184c5316459d2776/captcha-0.7.1-py3-none-any.whl", hash = "sha256:8b73b5aba841ad1e5bdb856205bf5f09560b728ee890eb9dae42901219c8c599", size = 147606, upload-time = "2025-03-01T05:00:10.433Z" },
 ]
 
 [[package]]
@@ -791,6 +807,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d3/38/af70d7ab1ae9d4da450eeec1fa3918940a5fafb9055e934af8d6eb0c2313/et_xmlfile-2.0.0.tar.gz", hash = "sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54", size = 17234, upload-time = "2024-10-25T17:25:40.039Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c1/8b/5fe2cc11fee489817272089c4203e679c63b570a5aaeb18d852ae3cbba6a/et_xmlfile-2.0.0-py3-none-any.whl", hash = "sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa", size = 18059, upload-time = "2024-10-25T17:25:39.051Z" },
+]
+
+[[package]]
+name = "extra-streamlit-components"
+version = "0.1.81"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/24/49/9b47a3450034d74259f9d4887d85be4e6a771bc21da467b253323d78c4d9/extra_streamlit_components-0.1.81.tar.gz", hash = "sha256:eb9beb7bacfe8b3d238f1888a21c78ac6cfa569341be484bca08c3ea0b15f20d", size = 2250141, upload-time = "2025-08-17T18:12:33.606Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fd/8d/d2f1eeb52c50c990d14fd91bea35157890bb791c46b3f2bebaa5eef4bdf6/extra_streamlit_components-0.1.81-py3-none-any.whl", hash = "sha256:11a4651dbd03cac04edfbb8711757b1d10e3cdf280b8fa3a43f970d05e684619", size = 2278499, upload-time = "2025-08-17T18:12:30.803Z" },
 ]
 
 [[package]]
@@ -3576,6 +3604,23 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/91/74/20dac6d6200d6ec0e1c230fb8eeb6a1a423645eacb76e8d802adfc246456/streamlit-1.58.0.tar.gz", hash = "sha256:78a22e7085b053af7ce544442bf4b670771e68c509ba1bdaa056ba0708f49c3d", size = 8721149, upload-time = "2026-05-28T18:02:44.606Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/df/84/14c36a92fb24f8e1cea452f53b0744b5da69d52cdd2fe22e71e6fbf765d5/streamlit-1.58.0-py3-none-any.whl", hash = "sha256:4ca8a7afc5bd16a5f176ccf4be1e34e8121cad0240becd127fb58a103ea3178d", size = 9219185, upload-time = "2026-05-28T18:02:41.993Z" },
+]
+
+[[package]]
+name = "streamlit-authenticator"
+version = "0.4.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "bcrypt" },
+    { name = "captcha" },
+    { name = "cryptography" },
+    { name = "extra-streamlit-components" },
+    { name = "pyjwt" },
+    { name = "pyyaml" },
+    { name = "streamlit" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/83/47/837b158e1a5b0d187d20c6be22c46d84d12a8d3e8d7113b67ebb33e221c9/streamlit_authenticator-0.4.2-py3-none-any.whl", hash = "sha256:442acccef6af65e2b0feb15d5e9f68707f204c1d31c60673690d87179c7ca5b2", size = 43197, upload-time = "2025-03-01T20:36:07.566Z" },
 ]
 
 [[package]]

@@ -2,9 +2,10 @@ import streamlit as st
 import requests
 
 from src.frontend.config.frontend_config import Settings
-
+from src.frontend.auth.auth_manager import require_login
 
 settings = Settings()
+username = require_login()
 
 st.title("📂 Upload Documents")
 
@@ -20,7 +21,7 @@ def fetch_documents_and_storage():
     """
     Fetches uploaded documents and storage quota information from the backend.
     """
-    response = requests.get(settings.DOCUMENT_LIST_URL, timeout=30)
+    response = requests.get(settings.DOCUMENT_LIST_URL, params={"user_id": username}, timeout=30)
 
     if response.status_code != 200:
         st.error("Could not fetch uploaded documents.")
@@ -72,6 +73,7 @@ def upload_selected_files(uploaded_files):
                 response = requests.post(
                     settings.DOCUMENT_UPLOAD_URL,
                     files=files,
+                    params={"user_id": username},
                     timeout=300,
                 )
 
@@ -92,6 +94,7 @@ def delete_document(filename: str):
     try:
         response = requests.delete(
             f"{settings.DOCUMENT_DELETE_BASE_URL}/{filename}",
+            params={"user_id": username},
             timeout=300,
         )
 

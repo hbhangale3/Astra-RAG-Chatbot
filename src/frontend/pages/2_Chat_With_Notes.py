@@ -6,8 +6,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '.
 import streamlit as st
 import requests
 from src.frontend.config.frontend_config import Settings
+from src.frontend.auth.auth_manager import require_login
 
 settings = Settings()
+username = require_login()
+
 
 st.title("💬 Chat With Notes")
 
@@ -35,7 +38,7 @@ if user_prompt:
     st.session_state.chat_history.append({"role": "user", "content": user_prompt})
 
     # Prepare payload for API
-    payload = {"chat_history": st.session_state.chat_history}
+    payload = {"chat_history": st.session_state.chat_history, "user_id": username}
     try:
         response = requests.post(settings.CHAT_ENDPOINT_URL, json=payload)
         response.raise_for_status()

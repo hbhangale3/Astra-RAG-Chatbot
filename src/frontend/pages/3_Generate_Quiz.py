@@ -3,8 +3,11 @@ import streamlit as st
 
 from src.frontend.config.frontend_config import Settings
 
+from src.frontend.auth.auth_manager import require_login
 
 settings = Settings()
+username = require_login()
+
 
 st.title("📝 Generate Quiz")
 
@@ -29,6 +32,7 @@ def save_quiz_attempt(topic: str, difficulty: str, question_type: str, score: in
         "total_questions": total,
         "percentage": percentage,
         "questions": questions,
+        "user_id": username
     }
 
     try:

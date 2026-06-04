@@ -14,11 +14,11 @@ router = APIRouter(
 
 
 @router.post("/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), user_id: str = "default_user"):
     """
     Uploads one PDF document and ingests it into the user's ChromaDB store.
     """
-    document = await save_and_ingest_document(file)
+    document = await save_and_ingest_document(file,user_id=user_id)
 
     return {
         "message": "Document uploaded and ingested successfully.",
@@ -28,28 +28,28 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 @router.get("/list")
-def list_documents():
+def list_documents(user_id: str = "default_user"):
     """
     Returns all uploaded PDF documents for the default user.
     """
     return {
-        "documents": list_user_documents(),
-        "storage": get_storage_summary(),
+        "documents": list_user_documents(user_id=user_id),
+        "storage": get_storage_summary(user_id=user_id),
     }
 
 
 @router.get("/storage")
-def get_storage():
+def get_storage(user_id: str = "default_user"):
     """
     Returns current storage usage and quota information.
     """
     return {
-        "storage": get_storage_summary(),
+        "storage": get_storage_summary(user_id=user_id),
     }
 
 
 @router.delete("/{filename}")
-def delete_document(filename: str):
+def delete_document(filename: str, user_id: str = "default_user"):
     """
     Deletes one uploaded PDF and removes its vectors by rebuilding ChromaDB.
     """
