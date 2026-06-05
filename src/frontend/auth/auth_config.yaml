@@ -3,12 +3,12 @@ credentials:
     harsh:
       email: harsh@example.com
       name: Harsh Bhangale
-      password: studybuddy123
+      password: "$2b$12$Tb.RX0qjC.r7/h1FhPmdwe/7AuUReC80GHmm2mMwQ8iOA8c2deNdi"
 
     alice:
       email: alice@example.com
       name: Alice Johnson
-      password: alice123
+      password: "$2b$12$0Cs87ioZGXr81rbRfnB5EOQy6BWsJmkvdjbFdH7lP6JUUaBC3mxVy"
 
 cookie:
   name: study_buddy_auth
