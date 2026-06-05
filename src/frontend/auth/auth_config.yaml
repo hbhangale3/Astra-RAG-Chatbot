@@ -3,17 +3,22 @@ credentials:
     harsh:
       email: harsh@example.com
       name: Harsh Bhangale
-      password: "$2b$12$Tb.RX0qjC.r7/h1FhPmdwe/7AuUReC80GHmm2mMwQ8iOA8c2deNdi"
-
+      password: $2b$12$Tb.RX0qjC.r7/h1FhPmdwe/7AuUReC80GHmm2mMwQ8iOA8c2deNdi
     alice:
       email: alice@example.com
       name: Alice Johnson
-      password: "$2b$12$0Cs87ioZGXr81rbRfnB5EOQy6BWsJmkvdjbFdH7lP6JUUaBC3mxVy"
-
+      password: $2b$12$0Cs87ioZGXr81rbRfnB5EOQy6BWsJmkvdjbFdH7lP6JUUaBC3mxVy
+    shiva:
+      email: shiva@example.com
+      name: Shivangi Goyal
+      password: $2b$12$AdqPIf75Y.8f305sGG2y3uMiTkAJQchs7O4WdVJ34f5/xuvJXClSm
+    test:
+      email: test@example.com
+      name: Test Sharma
+      password: $2b$12$n1JXccDQeGQQNGmiUs73ouJNQCFYdHK3mKcgi4/1tREyqUvzZwrNy
 cookie:
   name: study_buddy_auth
   key: study_buddy_signature_key
   expiry_days: 7
-
 preauthorized:
   emails: []
