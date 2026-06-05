@@ -5,6 +5,11 @@ credentials:
       name: Harsh Bhangale
       password: studybuddy123
 
+    alice:
+      email: alice@example.com
+      name: Alice Johnson
+      password: alice123
+
 cookie:
   name: study_buddy_auth
   key: study_buddy_signature_key

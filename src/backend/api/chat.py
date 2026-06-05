@@ -14,13 +14,14 @@ class ChatMessage(BaseModel):
 
 class ChatHistoryRequest(BaseModel):
     chat_history: List[ChatMessage]
+    user_id: str = "default_user"
 
 @router.post("/chat/answer")
 def chat_answer(request: ChatHistoryRequest):
     logger.info(f"Received API request with chat_history: {request.chat_history}")
     try:
         chat_history = [msg.dict() for msg in request.chat_history]
-        result = get_answer(chat_history)
+        result = get_answer(chat_history, user_id=request.user_id)
         logger.info(f"API response: {result}")
         return result
     except Exception as e:

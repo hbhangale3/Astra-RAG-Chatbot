@@ -1,31 +1,39 @@
 import sys
 import os
-# Add project root to sys.path BEFORE any imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+
+# Add project root to sys.path BEFORE any imports.
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 import streamlit as st
 import requests
+
 from src.frontend.config.frontend_config import Settings
 from src.frontend.auth.auth_manager import require_login
+
 
 settings = Settings()
 username = require_login()
 
-
 st.title("💬 Chat With Notes")
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+# Keep chat history isolated per logged-in user.
+chat_history_key = f"chat_history_{username}"
 
-for message in st.session_state.chat_history:
+if chat_history_key not in st.session_state:
+    st.session_state[chat_history_key] = []
+
+for message in st.session_state[chat_history_key]:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+
         if message.get("role") == "assistant":
             sources = message.get("sources", [])
             tool_used = message.get("tool_used")
             rationale = message.get("rationale")
+
             if sources:
                 st.markdown(f"**Sources:** {', '.join(sources)}")
+
             if tool_used or rationale:
                 with st.expander("Show details (tool & rationale)"):
                     st.markdown(f"**Tool Used:** {tool_used if tool_used else 'N/A'}")
@@ -35,35 +43,56 @@ user_prompt = st.chat_input("Ask Chatbot...")
 
 if user_prompt:
     st.chat_message("user").markdown(user_prompt)
-    st.session_state.chat_history.append({"role": "user", "content": user_prompt})
 
-    # Prepare payload for API
-    payload = {"chat_history": st.session_state.chat_history, "user_id": username}
+    st.session_state[chat_history_key].append(
+        {
+            "role": "user",
+            "content": user_prompt,
+        }
+    )
+
+    payload = {
+        "chat_history": st.session_state[chat_history_key],
+        "user_id": username,
+    }
+
     try:
-        response = requests.post(settings.CHAT_ENDPOINT_URL, json=payload)
+        response = requests.post(
+            settings.CHAT_ENDPOINT_URL,
+            json=payload,
+            timeout=120,
+        )
         response.raise_for_status()
+
         response_json = response.json()
+
         assistant_response = response_json.get("answer", "(No response)")
         tool_used = response_json.get("tool_used", "N/A")
         rationale = response_json.get("rationale", "N/A")
         sources = response_json.get("sources", [])
+
     except Exception as e:
         assistant_response = f"Error: {e}"
         tool_used = "N/A"
         rationale = "N/A"
         sources = []
 
-    st.session_state.chat_history.append({
-        "role": "assistant",
-        "content": assistant_response,
-        "tool_used": tool_used,
-        "rationale": rationale,
-        "sources": sources
-    })
+    st.session_state[chat_history_key].append(
+        {
+            "role": "assistant",
+            "content": assistant_response,
+            "tool_used": tool_used,
+            "rationale": rationale,
+            "sources": sources,
+        }
+    )
+
     with st.chat_message("assistant"):
         st.markdown(assistant_response)
+
         if sources:
             st.markdown(f"**Sources:** {', '.join(sources)}")
+
         with st.expander("Show details (tool & rationale)"):
             st.markdown(f"**Tool Used:** {tool_used}")
             st.markdown(f"**Rationale:** {rationale}")

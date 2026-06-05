@@ -1,5 +1,6 @@
 from itertools import count
 import logging
+from pathlib import Path
 from urllib import response
 # from chromadb.app import settings
 from crewai.tools import tool
@@ -24,7 +25,7 @@ embed_model = HuggingFaceEmbedding()
 
 #define the RAG QA tool
 @tool
-def rag_query_tool(query: str)-> dict:
+def rag_query_tool(query: str, user_id: str = "default_user")-> dict:
     """
      Answers a query by retrieving relevant documents and generating a response.
     Returns both the generated answer and the source file names from which the information was retrieved.
@@ -43,11 +44,13 @@ def rag_query_tool(query: str)-> dict:
        """
     
     settings = AgentSettings()
-    vector_store_path = settings.VECTOR_STORE_DIR
+    # vector_store_path = settings.VECTOR_STORE_DIR
+    # collection_name = settings.COLLECTION_NAME
+    vector_store_path = Path("data/users") / user_id / "chroma"
     collection_name = settings.COLLECTION_NAME
 
     #debug
-    print(f"[RETRIEVAL] VECTOR_STORE_DIR = {settings.VECTOR_STORE_DIR}")
+    print(f"[RETRIEVAL] VECTOR_STORE_DIR = {vector_store_path}")
     print(f"[RETRIEVAL] COLLECTION_NAME = {settings.COLLECTION_NAME}")
 
     #configure LLm
