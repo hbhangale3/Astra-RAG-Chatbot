@@ -2,12 +2,11 @@ import requests
 import streamlit as st
 
 from src.frontend.config.frontend_config import Settings
-
 from src.frontend.auth.auth_manager import require_login
+
 
 settings = Settings()
 username = require_login()
-
 
 st.title("📝 Generate Quiz")
 
@@ -18,11 +17,32 @@ st.markdown(
     """
 )
 
-def save_quiz_attempt(topic: str, difficulty: str, question_type: str, score: int, total: int, percentage: float, questions: list):
-    """
-    Saves the completed quiz attempt to the backend.
+# User-specific Streamlit session keys.
+generated_quiz_key = f"generated_quiz_{username}"
+quiz_answers_key = f"quiz_answers_{username}"
+quiz_submitted_key = f"quiz_submitted_{username}"
 
-    This allows the Dashboard page to show quiz history and score metrics.
+if generated_quiz_key not in st.session_state:
+    st.session_state[generated_quiz_key] = None
+
+if quiz_answers_key not in st.session_state:
+    st.session_state[quiz_answers_key] = {}
+
+if quiz_submitted_key not in st.session_state:
+    st.session_state[quiz_submitted_key] = False
+
+
+def save_quiz_attempt(
+    topic: str,
+    difficulty: str,
+    question_type: str,
+    score: int,
+    total: int,
+    percentage: float,
+    questions: list,
+):
+    """
+    Saves the completed quiz attempt to the backend for the logged-in user.
     """
     payload = {
         "topic": topic,
@@ -32,7 +52,7 @@ def save_quiz_attempt(topic: str, difficulty: str, question_type: str, score: in
         "total_questions": total,
         "percentage": percentage,
         "questions": questions,
-        "user_id": username
+        "user_id": username,
     }
 
     try:
@@ -52,18 +72,21 @@ def save_quiz_attempt(topic: str, difficulty: str, question_type: str, score: in
         st.warning(f"Quiz was graded, but backend save failed: {e}")
 
 
-def generate_quiz(topic: str, num_questions: int, difficulty: str, question_type: str):
+def generate_quiz(
+    topic: str,
+    num_questions: int,
+    difficulty: str,
+    question_type: str,
+):
     """
-    Sends quiz generation request to the backend.
-
-    Returns:
-        dict | None: Quiz response from backend if successful.
+    Sends a quiz generation request to the backend.
     """
     payload = {
         "topic": topic,
         "num_questions": num_questions,
         "difficulty": difficulty,
         "question_type": question_type,
+        "user_id": username,
     }
 
     try:
@@ -87,11 +110,9 @@ def generate_quiz(topic: str, num_questions: int, difficulty: str, question_type
 
 def render_quiz_questions(questions: list):
     """
-    Renders quiz questions using Streamlit radio buttons.
-
-    Stores selected answers in st.session_state.quiz_answers.
+    Renders quiz questions and stores selected answers for the logged-in user.
     """
-    st.session_state.quiz_answers = {}
+    st.session_state[quiz_answers_key] = {}
 
     for index, question in enumerate(questions):
         question_number = index + 1
@@ -105,22 +126,17 @@ def render_quiz_questions(questions: list):
             label="Choose your answer:",
             options=list(options.keys()),
             format_func=lambda option_key: f"{option_key}. {options[option_key]}",
-            key=f"question_{index}",
+            key=f"{username}_question_{index}",
         )
 
-        st.session_state.quiz_answers[index] = selected_option
+        st.session_state[quiz_answers_key][index] = selected_option
 
         st.divider()
 
 
 def grade_quiz(questions: list):
     """
-    Grades the quiz on the frontend.
-
-    MVP note:
-    The correct answers are available on the frontend.
-    This is acceptable for an MVP learning app.
-    In production, grading should happen on the backend.
+    Grades the quiz and saves the attempt for the logged-in user.
     """
     score = 0
     total = len(questions)
@@ -128,7 +144,7 @@ def grade_quiz(questions: list):
     st.header("Quiz Results")
 
     for index, question in enumerate(questions):
-        selected_answer = st.session_state.quiz_answers.get(index)
+        selected_answer = st.session_state[quiz_answers_key].get(index)
         correct_answer = question["correct_answer"]
 
         is_correct = selected_answer == correct_answer
@@ -158,14 +174,17 @@ def grade_quiz(questions: list):
     st.metric("Percentage", f"{percentage}%")
 
     save_quiz_attempt(
-    topic=st.session_state.generated_quiz["topic"],
-    difficulty=st.session_state.generated_quiz["difficulty"],
-    question_type=st.session_state.generated_quiz["question_type"],
-    score=score,
-    total=total,
-    percentage=percentage,
-    questions=questions,
-)
+        topic=st.session_state[generated_quiz_key]["topic"],
+        difficulty=st.session_state[generated_quiz_key]["difficulty"],
+        question_type=st.session_state[generated_quiz_key]["question_type"],
+        score=score,
+        total=total,
+        percentage=percentage,
+        questions=questions,
+    )
+
+    st.session_state[quiz_submitted_key] = True
+
 
 topic = st.text_input(
     "Topic",
@@ -190,9 +209,6 @@ question_type = st.selectbox(
     ["MCQ"],
 )
 
-if "generated_quiz" not in st.session_state:
-    st.session_state.generated_quiz = None
-
 if st.button("Generate Quiz"):
     if not topic.strip():
         st.warning("Please enter a topic.")
@@ -206,11 +222,13 @@ if st.button("Generate Quiz"):
             )
 
             if quiz_response:
-                st.session_state.generated_quiz = quiz_response
+                st.session_state[generated_quiz_key] = quiz_response
+                st.session_state[quiz_answers_key] = {}
+                st.session_state[quiz_submitted_key] = False
                 st.success("Quiz generated successfully.")
 
-if st.session_state.generated_quiz:
-    quiz_data = st.session_state.generated_quiz["quiz"]
+if st.session_state[generated_quiz_key]:
+    quiz_data = st.session_state[generated_quiz_key]["quiz"]
     questions = quiz_data.get("questions", [])
 
     if not questions:
