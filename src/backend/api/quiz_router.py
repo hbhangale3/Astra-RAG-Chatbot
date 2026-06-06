@@ -10,6 +10,7 @@ from src.backend.services.quiz_history_service import (
     load_quiz_attempts,
     get_quiz_summary,
 )
+from src.backend.services.metrics_service import quiz_generations_total
 
 
 DEFAULT_USER_ID = "default_user"
@@ -78,10 +79,14 @@ def generate_quiz_endpoint(request: QuizGenerateRequest):
     Generates a source-grounded quiz from uploaded documents.
 
     Flow:
-    1. Receive topic, question count, and difficulty.
-    2. Retrieve relevant chunks from ChromaDB.
+    1. Receive topic, question count, difficulty, question type, and user ID.
+    2. Retrieve relevant chunks from the selected user's ChromaDB.
     3. Reject the request if uploaded material is insufficient.
     4. Generate quiz questions from the retrieved source material.
     5. Return questions, answers, explanations, and sources.
     """
+    quiz_generations_total.labels(
+        user_id=request.user_id,
+    ).inc()
+
     return generate_quiz(request)

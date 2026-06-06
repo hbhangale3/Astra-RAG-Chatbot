@@ -10,7 +10,9 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.groq import Groq
 from llama_index.core import Settings
 import chromadb
+import time
 
+from src.backend.services.metrics_service import rag_retrieval_latency_seconds
 #import config
 from src.agents.config.agent_settings import AgentSettings
 
@@ -109,7 +111,12 @@ def rag_query_tool(query: str, user_id: str = "default_user")-> dict:
 
     #pass the query to the query engine and get the response
     logger.info("Querying the index with the provided query")
+    retrieval_start_time = time.time()
     response = query_engine.query(query)
+    retrieval_duration = time.time() - retrieval_start_time
+    rag_retrieval_latency_seconds.labels(
+        user_id=user_id,
+    ).observe(retrieval_duration)
     # print("\n====================")
     # print("TYPE OF RESPONSE")
     # print(type(response))

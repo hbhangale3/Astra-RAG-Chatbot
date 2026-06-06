@@ -1,8 +1,15 @@
 from pathlib import Path
-from fastapi import UploadFile, HTTPException
+
 import chromadb
+from fastapi import HTTPException, UploadFile
 
 from src.rag_doc_ingestion.ingest_doc import build_vector_store_from_uploaded_documents
+from src.backend.services.metrics_service import (
+    documents_uploaded_total,
+    storage_used_bytes,
+    ingestion_success_total,
+    ingestion_failure_total,
+)
 
 
 DEFAULT_USER_ID = "default_user"
@@ -53,6 +60,25 @@ def get_current_storage_usage_bytes(user_id: str = DEFAULT_USER_ID) -> int:
     return sum(file.stat().st_size for file in upload_dir.glob("*.pdf"))
 
 
+def update_storage_used_metric(user_id: str = DEFAULT_USER_ID) -> int:
+    """
+    Updates the Prometheus storage gauge for a user.
+
+    Parameters:
+        user_id (str): Authenticated user identifier.
+
+    Returns:
+        int: Current storage usage in bytes.
+    """
+    used_bytes = get_current_storage_usage_bytes(user_id)
+
+    storage_used_bytes.labels(
+        user_id=user_id,
+    ).set(used_bytes)
+
+    return used_bytes
+
+
 def get_storage_summary(user_id: str = DEFAULT_USER_ID) -> dict:
     """
     Returns storage quota information for the user.
@@ -61,6 +87,7 @@ def get_storage_summary(user_id: str = DEFAULT_USER_ID) -> dict:
 
     return {
         "user_id": user_id,
+        "used_bytes": used_bytes,
         "used_mb": round(used_bytes / (1024 * 1024), 2),
         "limit_mb": MAX_USER_STORAGE_MB,
         "remaining_mb": round((MAX_USER_STORAGE_BYTES - used_bytes) / (1024 * 1024), 2),
@@ -86,10 +113,14 @@ def rebuild_user_chroma(user_id: str = DEFAULT_USER_ID) -> None:
     # If no PDFs are left, clear the Chroma collection.
     if not pdf_files:
         db = chromadb.PersistentClient(path=str(chroma_dir.resolve()))
+
         try:
             db.delete_collection(name=COLLECTION_NAME)
         except Exception:
             pass
+
+        # Empty document set is a successful Chroma cleanup operation.
+        ingestion_success_total.labels(user_id=user_id).inc()
         return
 
     ingestion_status = build_vector_store_from_uploaded_documents(
@@ -99,13 +130,20 @@ def rebuild_user_chroma(user_id: str = DEFAULT_USER_ID) -> None:
     )
 
     if ingestion_status != 0:
+        ingestion_failure_total.labels(user_id=user_id).inc()
+
         raise HTTPException(
             status_code=500,
             detail="Document operation completed, but ChromaDB rebuild failed.",
         )
 
+    ingestion_success_total.labels(user_id=user_id).inc()
 
-async def save_and_ingest_document(file: UploadFile, user_id: str = DEFAULT_USER_ID) -> dict:
+
+async def save_and_ingest_document(
+    file: UploadFile,
+    user_id: str = DEFAULT_USER_ID,
+) -> dict:
     """
     Saves one uploaded PDF and rebuilds the user's ChromaDB collection.
 
@@ -114,7 +152,8 @@ async def save_and_ingest_document(file: UploadFile, user_id: str = DEFAULT_USER
     2. Check storage quota.
     3. Save PDF to user's upload directory.
     4. Rebuild ChromaDB from all uploaded PDFs.
-    5. Return uploaded file metadata.
+    5. Update Prometheus document/storage/ingestion metrics.
+    6. Return uploaded file metadata.
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is missing.")
@@ -155,11 +194,18 @@ async def save_and_ingest_document(file: UploadFile, user_id: str = DEFAULT_USER
     # Rebuild vector store from all current uploaded PDFs.
     rebuild_user_chroma(user_id)
 
+    # Count only successful upload + ingestion as uploaded.
+    documents_uploaded_total.labels(user_id=user_id).inc()
+
+    # Update current storage gauge after successful upload.
+    used_bytes = update_storage_used_metric(user_id)
+
     return {
         "filename": safe_filename,
         "path": str(file_path),
         "size_mb": round(len(content) / (1024 * 1024), 2),
         "user_id": user_id,
+        "used_bytes": used_bytes,
         "ingestion_status": "success",
     }
 
@@ -182,6 +228,9 @@ def list_user_documents(user_id: str = DEFAULT_USER_ID) -> list[dict]:
             }
         )
 
+    # Keep storage gauge fresh when the frontend lists documents.
+    update_storage_used_metric(user_id)
+
     return documents
 
 
@@ -193,7 +242,8 @@ def delete_user_document(filename: str, user_id: str = DEFAULT_USER_ID) -> dict:
     1. Sanitize filename.
     2. Delete file from uploads directory.
     3. Rebuild ChromaDB from remaining PDFs.
-    4. Return updated document and storage information.
+    4. Update Prometheus storage/ingestion metrics.
+    5. Return updated document and storage information.
     """
     upload_dir = get_user_upload_dir(user_id)
     safe_filename = clean_filename(filename)
@@ -209,6 +259,9 @@ def delete_user_document(filename: str, user_id: str = DEFAULT_USER_ID) -> dict:
 
     # Rebuild ChromaDB so deleted document chunks are removed from retrieval.
     rebuild_user_chroma(user_id)
+
+    # Update current storage gauge after successful deletion.
+    update_storage_used_metric(user_id)
 
     return {
         "message": "Document deleted successfully.",

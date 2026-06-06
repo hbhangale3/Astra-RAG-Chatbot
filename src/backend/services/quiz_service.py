@@ -1,5 +1,7 @@
 import json
 import os
+import time
+from pathlib import Path
 from typing import Dict, List
 
 import chromadb
@@ -9,9 +11,19 @@ from pydantic import BaseModel, Field
 
 from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
 from src.agents.config.agent_settings import AgentSettings
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from src.backend.services.metrics_service import (
+    rag_retrieval_latency_seconds,
+    llm_generation_latency_seconds,
+    llm_input_tokens_total,
+    llm_output_tokens_total,
+)
+
+
+DEFAULT_USER_ID = "default_user"
+BASE_DATA_DIR = Path("data/users")
 
 embed_model = HuggingFaceEmbedding()
 
@@ -32,21 +44,50 @@ class QuizGenerateRequest(BaseModel):
     num_questions: int = Field(default=5, ge=1, le=15)
     difficulty: str = Field(default="Medium")
     question_type: str = Field(default="MCQ")
+    user_id: str = DEFAULT_USER_ID
 
 
-def get_chroma_collection():
+def get_user_chroma_dir(user_id: str = DEFAULT_USER_ID) -> Path:
     """
-    Loads the existing ChromaDB collection used by the RAG pipeline.
+    Returns the ChromaDB directory for the selected user.
+
+    Parameters:
+        user_id (str): Authenticated user identifier.
+
+    Returns:
+        Path: User-specific ChromaDB directory path.
+    """
+    return BASE_DATA_DIR / user_id / "chroma"
+
+
+def get_chroma_collection(user_id: str = DEFAULT_USER_ID):
+    """
+    Loads the existing ChromaDB collection used by the quiz RAG pipeline.
 
     Important:
     Retrieval must use get_collection(), not get_or_create_collection().
     If the collection does not exist, we want to fail clearly instead of silently
     creating an empty collection.
+
+    Parameters:
+        user_id (str): Authenticated user identifier.
+
+    Returns:
+        Collection: ChromaDB collection for the selected user's uploaded documents.
     """
-    print(f"[QUIZ RETRIEVAL] VECTOR_STORE_DIR = {settings.VECTOR_STORE_DIR}")
+    vector_store_dir = get_user_chroma_dir(user_id)
+
+    print(f"[QUIZ RETRIEVAL] USER_ID = {user_id}")
+    print(f"[QUIZ RETRIEVAL] VECTOR_STORE_DIR = {vector_store_dir}")
     print(f"[QUIZ RETRIEVAL] COLLECTION_NAME = {settings.COLLECTION_NAME}")
 
-    db = chromadb.PersistentClient(path=settings.VECTOR_STORE_DIR)
+    if not vector_store_dir.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="No uploaded documents found for this user. Please upload notes first.",
+        )
+
+    db = chromadb.PersistentClient(path=str(vector_store_dir))
     collection = db.get_collection(name=settings.COLLECTION_NAME)
 
     print(f"[QUIZ RETRIEVAL] Collection count = {collection.count()}")
@@ -54,29 +95,49 @@ def get_chroma_collection():
     return collection
 
 
-def retrieve_relevant_chunks(topic: str) -> List[dict]:
+def retrieve_relevant_chunks(
+    topic: str,
+    user_id: str = DEFAULT_USER_ID,
+) -> List[dict]:
     """
-    Retrieves source chunks from ChromaDB for the requested quiz topic.
+    Retrieves source chunks from the selected user's ChromaDB for the quiz topic.
 
     If the topic is not present in the uploaded material, this function returns
     too few chunks and the quiz request is rejected.
+
+    Parameters:
+        topic (str): Topic entered by the user.
+        user_id (str): Authenticated user identifier.
+
+    Returns:
+        List[dict]: Relevant source chunks with text, score, and source filename.
     """
-    collection = get_chroma_collection()
+    retrieval_start_time = time.time()
 
-    vector_store = ChromaVectorStore(
-        chroma_collection=collection
-    )
+    try:
+        collection = get_chroma_collection(user_id)
 
-    index = VectorStoreIndex.from_vector_store(
-        vector_store=vector_store,
-        embed_model=embed_model,
-    )
+        vector_store = ChromaVectorStore(
+            chroma_collection=collection
+        )
 
-    retriever = index.as_retriever(
-        similarity_top_k=SIMILARITY_TOP_K
-    )
+        index = VectorStoreIndex.from_vector_store(
+            vector_store=vector_store,
+            embed_model=embed_model,
+        )
 
-    retrieved_nodes = retriever.retrieve(topic)
+        retriever = index.as_retriever(
+            similarity_top_k=SIMILARITY_TOP_K
+        )
+
+        retrieved_nodes = retriever.retrieve(topic)
+
+    finally:
+        retrieval_duration = time.time() - retrieval_start_time
+
+        rag_retrieval_latency_seconds.labels(
+            user_id=user_id,
+        ).observe(retrieval_duration)
 
     relevant_chunks = []
 
@@ -107,6 +168,13 @@ def build_quiz_prompt(request: QuizGenerateRequest, chunks: List[dict]) -> str:
 
     The model is instructed to generate questions only from the retrieved source
     chunks and return valid JSON.
+
+    Parameters:
+        request (QuizGenerateRequest): Quiz generation request payload.
+        chunks (List[dict]): Retrieved source chunks.
+
+    Returns:
+        str: Prompt sent to the LLM.
     """
     source_context = "\n\n".join(
         [
@@ -164,14 +232,28 @@ Rules:
 """
 
 
-def generate_quiz_with_llm(request: QuizGenerateRequest, chunks: List[dict]) -> Dict:
+def generate_quiz_with_llm(
+    request: QuizGenerateRequest,
+    chunks: List[dict],
+) -> Dict:
     """
     Calls the LLM to generate quiz questions from retrieved source chunks.
+
+    Parameters:
+        request (QuizGenerateRequest): Quiz generation request payload.
+        chunks (List[dict]): Retrieved source chunks.
+
+    Returns:
+        Dict: Parsed quiz JSON returned by the LLM.
     """
     prompt = build_quiz_prompt(request, chunks)
 
+    model_name = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    llm_start_time = time.time()
+
     response = client.chat.completions.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        model=model_name,
         messages=[
             {
                 "role": "system",
@@ -185,6 +267,29 @@ def generate_quiz_with_llm(request: QuizGenerateRequest, chunks: List[dict]) -> 
         temperature=0.2,
         response_format={"type": "json_object"},
     )
+
+    llm_duration = time.time() - llm_start_time
+
+    llm_generation_latency_seconds.labels(
+        user_id=request.user_id,
+        model=model_name,
+    ).observe(llm_duration)
+
+    usage = getattr(response, "usage", None)
+
+    if usage:
+        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        output_tokens = getattr(usage, "completion_tokens", 0) or 0
+
+        llm_input_tokens_total.labels(
+            user_id=request.user_id,
+            model=model_name,
+        ).inc(input_tokens)
+
+        llm_output_tokens_total.labels(
+            user_id=request.user_id,
+            model=model_name,
+        ).inc(output_tokens)
 
     raw_content = response.choices[0].message.content
 
@@ -202,12 +307,21 @@ def generate_quiz(request: QuizGenerateRequest) -> Dict:
     Main quiz generation workflow.
 
     Flow:
-    1. Retrieve chunks for the requested topic.
+    1. Retrieve chunks for the requested topic from the selected user's ChromaDB.
     2. Reject unsupported topics.
     3. Generate MCQs using the LLM.
     4. Return quiz data to the frontend.
+
+    Parameters:
+        request (QuizGenerateRequest): Quiz generation request payload.
+
+    Returns:
+        Dict: Quiz response returned to the frontend.
     """
-    chunks = retrieve_relevant_chunks(request.topic)
+    chunks = retrieve_relevant_chunks(
+        topic=request.topic,
+        user_id=request.user_id,
+    )
 
     if len(chunks) < MIN_REQUIRED_CHUNKS:
         raise HTTPException(
@@ -225,5 +339,6 @@ def generate_quiz(request: QuizGenerateRequest) -> Dict:
         "difficulty": request.difficulty,
         "question_type": request.question_type,
         "source_chunks_used": len(chunks),
+        "user_id": request.user_id,
         "quiz": quiz,
     }
