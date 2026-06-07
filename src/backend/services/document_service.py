@@ -16,7 +16,9 @@ DEFAULT_USER_ID = "default_user"
 BASE_DATA_DIR = Path("data/users")
 COLLECTION_NAME = "document_collection"
 
-# Total storage allowed per user for uploaded PDFs.
+SUPPORTED_DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".md"}
+
+# Total storage allowed per user for uploaded documents.
 MAX_USER_STORAGE_MB = 100
 MAX_USER_STORAGE_BYTES = MAX_USER_STORAGE_MB * 1024 * 1024
 
@@ -52,12 +54,43 @@ def clean_filename(filename: str) -> str:
     return Path(filename).name.replace(" ", "_")
 
 
-def get_current_storage_usage_bytes(user_id: str = DEFAULT_USER_ID) -> int:
+def is_supported_document(filename: str) -> bool:
     """
-    Calculates total storage currently used by the user's uploaded PDFs.
+    Checks whether the uploaded file extension is supported.
+
+    Parameters:
+        filename (str): Uploaded filename.
+
+    Returns:
+        bool: True if the extension is supported, otherwise False.
+    """
+    return Path(filename).suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS
+
+
+def get_uploaded_document_paths(user_id: str = DEFAULT_USER_ID) -> list[Path]:
+    """
+    Returns all supported uploaded document paths for a user.
+
+    Parameters:
+        user_id (str): Authenticated user identifier.
+
+    Returns:
+        list[Path]: Uploaded document paths matching supported extensions.
     """
     upload_dir = get_user_upload_dir(user_id)
-    return sum(file.stat().st_size for file in upload_dir.glob("*.pdf"))
+
+    return [
+        file
+        for file in upload_dir.iterdir()
+        if file.is_file() and file.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS
+    ]
+
+
+def get_current_storage_usage_bytes(user_id: str = DEFAULT_USER_ID) -> int:
+    """
+    Calculates total storage currently used by the user's uploaded documents.
+    """
+    return sum(file.stat().st_size for file in get_uploaded_document_paths(user_id))
 
 
 def update_storage_used_metric(user_id: str = DEFAULT_USER_ID) -> int:
@@ -96,11 +129,11 @@ def get_storage_summary(user_id: str = DEFAULT_USER_ID) -> dict:
 
 def rebuild_user_chroma(user_id: str = DEFAULT_USER_ID) -> None:
     """
-    Rebuilds the user's ChromaDB collection from all PDFs in the uploads folder.
+    Rebuilds the user's ChromaDB collection from all supported uploaded documents.
 
     MVP behavior:
     - Delete old collection.
-    - Rebuild collection from remaining uploaded PDFs.
+    - Rebuild collection from remaining uploaded documents.
 
     Future improvement:
     - Replace this with incremental ingestion.
@@ -108,10 +141,10 @@ def rebuild_user_chroma(user_id: str = DEFAULT_USER_ID) -> None:
     upload_dir = get_user_upload_dir(user_id)
     chroma_dir = get_user_chroma_dir(user_id)
 
-    pdf_files = list(upload_dir.glob("*.pdf"))
+    uploaded_documents = get_uploaded_document_paths(user_id)
 
-    # If no PDFs are left, clear the Chroma collection.
-    if not pdf_files:
+    # If no supported documents are left, clear the Chroma collection.
+    if not uploaded_documents:
         db = chromadb.PersistentClient(path=str(chroma_dir.resolve()))
 
         try:
@@ -145,21 +178,27 @@ async def save_and_ingest_document(
     user_id: str = DEFAULT_USER_ID,
 ) -> dict:
     """
-    Saves one uploaded PDF and rebuilds the user's ChromaDB collection.
+    Saves one uploaded document and rebuilds the user's ChromaDB collection.
 
     Flow:
     1. Validate file.
     2. Check storage quota.
-    3. Save PDF to user's upload directory.
-    4. Rebuild ChromaDB from all uploaded PDFs.
+    3. Save document to user's upload directory.
+    4. Rebuild ChromaDB from all uploaded documents.
     5. Update Prometheus document/storage/ingestion metrics.
     6. Return uploaded file metadata.
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is missing.")
 
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported for now.")
+    if not is_supported_document(file.filename):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported file type. Supported formats are: "
+                "PDF, DOCX, PPTX, TXT, and MD."
+            ),
+        )
 
     upload_dir = get_user_upload_dir(user_id)
 
@@ -187,11 +226,11 @@ async def save_and_ingest_document(
             ),
         )
 
-    # Save uploaded PDF to disk.
+    # Save uploaded document to disk.
     with open(file_path, "wb") as f:
         f.write(content)
 
-    # Rebuild vector store from all current uploaded PDFs.
+    # Rebuild vector store from all current uploaded documents.
     rebuild_user_chroma(user_id)
 
     # Count only successful upload + ingestion as uploaded.
@@ -202,6 +241,7 @@ async def save_and_ingest_document(
 
     return {
         "filename": safe_filename,
+        "extension": file_path.suffix.lower(),
         "path": str(file_path),
         "size_mb": round(len(content) / (1024 * 1024), 2),
         "user_id": user_id,
@@ -212,16 +252,15 @@ async def save_and_ingest_document(
 
 def list_user_documents(user_id: str = DEFAULT_USER_ID) -> list[dict]:
     """
-    Lists all PDF documents uploaded by the user.
+    Lists all supported documents uploaded by the user.
     """
-    upload_dir = get_user_upload_dir(user_id)
-
     documents = []
 
-    for file in upload_dir.glob("*.pdf"):
+    for file in get_uploaded_document_paths(user_id):
         documents.append(
             {
                 "filename": file.name,
+                "extension": file.suffix.lower(),
                 "path": str(file),
                 "size_mb": round(file.stat().st_size / (1024 * 1024), 2),
                 "user_id": user_id,
@@ -236,12 +275,12 @@ def list_user_documents(user_id: str = DEFAULT_USER_ID) -> list[dict]:
 
 def delete_user_document(filename: str, user_id: str = DEFAULT_USER_ID) -> dict:
     """
-    Deletes a specific uploaded PDF and rebuilds ChromaDB.
+    Deletes a specific uploaded document and rebuilds ChromaDB.
 
     Flow:
     1. Sanitize filename.
     2. Delete file from uploads directory.
-    3. Rebuild ChromaDB from remaining PDFs.
+    3. Rebuild ChromaDB from remaining documents.
     4. Update Prometheus storage/ingestion metrics.
     5. Return updated document and storage information.
     """
@@ -252,8 +291,11 @@ def delete_user_document(filename: str, user_id: str = DEFAULT_USER_ID) -> dict:
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Document not found.")
 
-    if file_path.suffix.lower() != ".pdf":
-        raise HTTPException(status_code=400, detail="Only PDF deletion is supported.")
+    if not is_supported_document(file_path.name):
+        raise HTTPException(
+            status_code=400,
+            detail="Only supported document deletion is allowed.",
+        )
 
     file_path.unlink()
 
