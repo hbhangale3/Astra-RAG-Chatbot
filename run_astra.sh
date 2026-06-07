@@ -2,27 +2,53 @@
 set -e
 
 echo "======================================="
-echo "Starting Astra RAG Chatbot"
+echo "Starting Astra RAG Study Buddy"
 echo "======================================="
 
-echo "DOCUMENTS_DIR=$DOCUMENTS_DIR"
-echo "VECTOR_STORE_DIR=$VECTOR_STORE_DIR"
-echo "COLLECTION_NAME=$COLLECTION_NAME"
+echo "MODE=${MODE:-all}"
+echo "PYTHONPATH=$PYTHONPATH"
+echo "BACKEND_BASE_URL=$BACKEND_BASE_URL"
+echo "OPENAI_MODEL=$OPENAI_MODEL"
 echo "MODEL_NAME=$MODEL_NAME"
 
-if [ ! -d "$VECTOR_STORE_DIR" ] || [ -z "$(ls -A "$VECTOR_STORE_DIR" 2>/dev/null)" ]; then
-  echo "Vector store not found or empty. Running ingestion..."
-  .venv/bin/python -m src.rag_doc_ingestion.ingest_doc
-else
-  echo "Vector store already exists. Skipping ingestion."
-fi
+mkdir -p data/users
 
-echo "Starting FastAPI backend..."
-.venv/bin/python -m src.backend.main &
+start_backend() {
+  echo "Starting FastAPI backend on port 8000..."
+  python -m src.backend.main
+}
 
-sleep 10
+start_frontend() {
+  echo "Starting Streamlit frontend on port 8501..."
+  streamlit run src/frontend/app.py \
+    --server.address=0.0.0.0 \
+    --server.port=8501
+}
 
-echo "Starting Streamlit frontend..."
-.venv/bin/streamlit run src/frontend/app.py \
-  --server.address=0.0.0.0 \
-  --server.port=8501
+case "${MODE:-all}" in
+  backend)
+    start_backend
+    ;;
+
+  frontend)
+    start_frontend
+    ;;
+
+  all)
+    echo "Starting backend and frontend in the same container..."
+    python -m src.backend.main &
+
+    echo "Waiting for backend to start..."
+    sleep 8
+
+    streamlit run src/frontend/app.py \
+      --server.address=0.0.0.0 \
+      --server.port=8501
+    ;;
+
+  *)
+    echo "Invalid MODE: $MODE"
+    echo "Allowed values: backend, frontend, all"
+    exit 1
+    ;;
+esac

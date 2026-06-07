@@ -34,6 +34,7 @@ if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
         "src.backend.main:app",
-        host=settings.API_HOST,
-        port=settings.API_PORT,
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
     )

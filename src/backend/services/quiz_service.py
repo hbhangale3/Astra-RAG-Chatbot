@@ -13,7 +13,6 @@ from llama_index.core import VectorStoreIndex
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-from src.agents.config.agent_settings import AgentSettings
 from src.backend.services.metrics_service import (
     rag_retrieval_latency_seconds,
     llm_generation_latency_seconds,
@@ -24,10 +23,9 @@ from src.backend.services.metrics_service import (
 
 DEFAULT_USER_ID = "default_user"
 BASE_DATA_DIR = Path("data/users")
+COLLECTION_NAME = "document_collection"
 
 embed_model = HuggingFaceEmbedding()
-
-settings = AgentSettings()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
@@ -79,7 +77,7 @@ def get_chroma_collection(user_id: str = DEFAULT_USER_ID):
 
     print(f"[QUIZ RETRIEVAL] USER_ID = {user_id}")
     print(f"[QUIZ RETRIEVAL] VECTOR_STORE_DIR = {vector_store_dir}")
-    print(f"[QUIZ RETRIEVAL] COLLECTION_NAME = {settings.COLLECTION_NAME}")
+    print(f"[QUIZ RETRIEVAL] COLLECTION_NAME = {COLLECTION_NAME}")
 
     if not vector_store_dir.exists():
         raise HTTPException(
@@ -87,8 +85,18 @@ def get_chroma_collection(user_id: str = DEFAULT_USER_ID):
             detail="No uploaded documents found for this user. Please upload notes first.",
         )
 
-    db = chromadb.PersistentClient(path=str(vector_store_dir))
-    collection = db.get_collection(name=settings.COLLECTION_NAME)
+    try:
+        db = chromadb.PersistentClient(path=str(vector_store_dir))
+        collection = db.get_collection(name=COLLECTION_NAME)
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No ChromaDB collection found for this user. "
+                "Please upload and ingest documents first."
+            ),
+        ) from e
 
     print(f"[QUIZ RETRIEVAL] Collection count = {collection.count()}")
 
@@ -113,6 +121,7 @@ def retrieve_relevant_chunks(
         List[dict]: Relevant source chunks with text, score, and source filename.
     """
     retrieval_start_time = time.time()
+    retrieved_nodes = []
 
     try:
         collection = get_chroma_collection(user_id)
@@ -217,7 +226,7 @@ Return ONLY valid JSON in this exact format:
       }},
       "correct_answer": "A",
       "explanation": "Explain why the correct answer is right using the source material.",
-      "source": "source_filename.pdf"
+      "source": "source_filename"
     }}
   ]
 }}

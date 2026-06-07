@@ -15,8 +15,6 @@ from src.rag_doc_ingestion.config.doc_ingestion_settings import DocIngestionSett
 
 SUPPORTED_DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".pptx", ".txt", ".md"}
 
-# Load the settings from the environment variables.
-settings = DocIngestionSettings()
 
 # Set up logging configuration.
 logging.basicConfig(
@@ -119,6 +117,8 @@ def build_vector_store_from_documents():
     This function is kept for backward compatibility with the original ingestion CLI.
     """
     logger.info("Starting vector store ingestion process.")
+    # Load the settings from the environment variables.
+    settings = DocIngestionSettings()
 
     try:
         docs_dir_path = settings.DOCUMENTS_DIR

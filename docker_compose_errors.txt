@@ -1,0 +1,1100 @@
+Below is a clean error log/documentation of the issues we faced while moving AstraRAG to the Docker Compose + Prometheus + Grafana stack.
+
+---
+
+# AstraRAG Dockerization and Monitoring Error Report
+
+## 1. Prometheus target showed: `no such host`
+
+### Error
+
+Prometheus showed:
+
+```text
+Error scraping target:
+Get "http://backend:8000/metrics":
+dial tcp: lookup backend on 127.0.0.11:53: no such host
+```
+
+### What this meant
+
+Prometheus was trying to scrape:
+
+```text
+http://backend:8000/metrics
+```
+
+but Docker DNS could not find a running service named `backend`.
+
+At first, it looked like a networking issue. But when we checked:
+
+```bash
+docker compose ps -a
+```
+
+we saw:
+
+```text
+astra-backend   Exited (1)
+```
+
+So Prometheus could not resolve/scrape `backend` because the backend container had crashed.
+
+### Root cause
+
+The backend crashed during startup. The actual issue was not Prometheus. It was that FastAPI could not start successfully.
+
+### Solution
+
+We checked backend logs:
+
+```bash
+docker compose logs backend
+```
+
+That revealed the real Python error. After fixing the backend crash, Prometheus could resolve `backend`.
+
+### Key learning
+
+Prometheus errors can be symptoms. Always check:
+
+```bash
+docker compose ps -a
+docker compose logs backend
+```
+
+before changing networking.
+
+---
+
+## 2. Backend crashed because `DocIngestionSettings` loaded too early
+
+### Error
+
+Backend logs showed:
+
+```text
+ValidationError: 3 validation errors for DocIngestionSettings
+
+DOCUMENTS_DIR
+  Field required
+
+VECTOR_STORE_DIR
+  Field required
+
+COLLECTION_NAME
+  Field required
+```
+
+### Problematic code
+
+In `ingest_doc.py`, we had:
+
+```python
+settings = DocIngestionSettings()
+```
+
+at the global module level.
+
+### Why this was wrong
+
+This line ran immediately when Python imported `ingest_doc.py`.
+
+The import chain was:
+
+```text
+FastAPI starts
+↓
+main.py imports document_router
+↓
+document_router imports document_service
+↓
+document_service imports ingest_doc.py
+↓
+settings = DocIngestionSettings() runs immediately
+↓
+required env vars are missing
+↓
+backend crashes
+```
+
+Earlier, the project used one global document folder and vector store:
+
+```text
+DOCUMENTS_DIR
+VECTOR_STORE_DIR
+COLLECTION_NAME
+```
+
+But after authentication and user-specific uploads, the new structure became:
+
+```text
+data/users/{user_id}/uploads
+data/users/{user_id}/chroma
+```
+
+So the backend no longer needed global ingestion settings just to start.
+
+### Solution
+
+We removed this from global scope:
+
+```python
+settings = DocIngestionSettings()
+```
+
+and moved it inside the legacy CLI ingestion function:
+
+```python
+def build_vector_store_from_documents():
+    settings = DocIngestionSettings()
+
+    docs_dir_path = settings.DOCUMENTS_DIR
+    vector_store_path = settings.VECTOR_STORE_DIR
+    collection_name = settings.COLLECTION_NAME
+```
+
+### Why this solved it
+
+Now `DocIngestionSettings()` only runs when we manually call the old CLI ingestion flow.
+
+FastAPI can import `ingest_doc.py` safely because uploaded-document ingestion already receives paths as function arguments:
+
+```python
+build_vector_store_from_uploaded_documents(
+    docs_dir_path=str(upload_dir.resolve()),
+    vector_store_path=str(chroma_dir.resolve()),
+    collection_name=COLLECTION_NAME,
+)
+```
+
+### Example
+
+Old behavior:
+
+```text
+Import file → immediately requires DOCUMENTS_DIR → crash
+```
+
+New behavior:
+
+```text
+Import file → no env validation
+User uploads file → app passes exact user upload/chroma paths
+```
+
+---
+
+## 3. Backend crashed because `AgentSettings` loaded too early in `quiz_service.py`
+
+### Error
+
+Backend logs showed:
+
+```text
+ValidationError: 5 validation errors for AgentSettings
+
+DOCUMENTS_DIR
+VECTOR_STORE_DIR
+COLLECTION_NAME
+MODEL_NAME
+MODEL_TEMPERATURE
+Field required
+```
+
+### Problematic code
+
+In `quiz_service.py`, we had:
+
+```python
+from src.agents.config.agent_settings import AgentSettings
+
+settings = AgentSettings()
+```
+
+and later:
+
+```python
+collection_name = settings.COLLECTION_NAME
+```
+
+### Why this was wrong
+
+`settings = AgentSettings()` ran during import.
+
+So when FastAPI imported the quiz router, it imported `quiz_service.py`, which immediately required old global settings. Docker did not have all of them, so backend startup failed.
+
+### Solution
+
+We removed:
+
+```python
+from src.agents.config.agent_settings import AgentSettings
+settings = AgentSettings()
+```
+
+and replaced it with a simple constant:
+
+```python
+COLLECTION_NAME = "document_collection"
+```
+
+Then we changed:
+
+```python
+settings.COLLECTION_NAME
+```
+
+to:
+
+```python
+COLLECTION_NAME
+```
+
+### Why this solved it
+
+Quiz retrieval now uses user-specific Chroma paths:
+
+```python
+BASE_DATA_DIR = Path("data/users")
+
+def get_user_chroma_dir(user_id: str = DEFAULT_USER_ID) -> Path:
+    return BASE_DATA_DIR / user_id / "chroma"
+```
+
+So quiz generation does not need:
+
+```text
+DOCUMENTS_DIR
+VECTOR_STORE_DIR
+```
+
+It only needs:
+
+```text
+data/users/{user_id}/chroma
+document_collection
+```
+
+### Example
+
+For user `harsh`, quiz retrieval now checks:
+
+```text
+data/users/harsh/chroma
+```
+
+instead of old global:
+
+```text
+vectorDB
+```
+
+---
+
+## 4. Prometheus showed: `connection refused`
+
+### Error
+
+Prometheus showed:
+
+```text
+Error scraping target:
+Get "http://backend:8000/metrics":
+dial tcp 172.18.0.2:8000: connect: connection refused
+```
+
+### What this meant
+
+This was different from `no such host`.
+
+`no such host` meant Docker could not resolve the backend.
+
+`connection refused` meant Docker resolved the backend container IP, but nothing was listening on port `8000`.
+
+So Docker DNS was working, but FastAPI was not reachable from other containers.
+
+### Backend log clue
+
+Backend logs showed:
+
+```text
+Uvicorn running on http://localhost:8000
+```
+
+### Why this was wrong
+
+Inside Docker, `localhost` means the container itself.
+
+If FastAPI binds to:
+
+```text
+localhost
+```
+
+or:
+
+```text
+127.0.0.1
+```
+
+then only the backend container can access it internally. Other containers like Prometheus cannot access it through:
+
+```text
+backend:8000
+```
+
+### Solution
+
+We updated `src/backend/main.py`.
+
+Before:
+
+```python
+uvicorn.run(
+    "src.backend.main:app",
+    host="localhost",
+    port=8000,
+)
+```
+
+After:
+
+```python
+uvicorn.run(
+    "src.backend.main:app",
+    host="0.0.0.0",
+    port=8000,
+    reload=False,
+)
+```
+
+### Why this solved it
+
+`0.0.0.0` means:
+
+```text
+Listen on all network interfaces inside the container.
+```
+
+So FastAPI became reachable from:
+
+```text
+Prometheus container → http://backend:8000/metrics
+Frontend container → http://backend:8000/chat/answer
+Host laptop → http://localhost:8000
+```
+
+### Example
+
+Bad in Docker:
+
+```text
+Uvicorn running on http://localhost:8000
+```
+
+Good in Docker:
+
+```text
+Uvicorn running on http://0.0.0.0:8000
+```
+
+---
+
+## 5. Prometheus showed: `context deadline exceeded`
+
+### Error
+
+Prometheus showed:
+
+```text
+Error scraping target:
+Get "http://backend:8000/metrics":
+context deadline exceeded
+```
+
+### What this meant
+
+Prometheus could find the backend, but the `/metrics` request was taking too long.
+
+This was progress compared to earlier errors.
+
+Previous errors:
+
+```text
+no such host       → backend not resolvable
+connection refused → backend not reachable
+deadline exceeded → backend reachable but slow to respond
+```
+
+### Likely cause
+
+The backend is heavy. It loads:
+
+```text
+LlamaIndex
+CrewAI
+LiteLLM
+HuggingFace embeddings
+SentenceTransformer model
+ChromaDB
+```
+
+During startup or heavy RAG/LLM calls, the backend may be slow to respond to a scrape.
+
+### Solution
+
+We increased Prometheus scrape interval and timeout.
+
+Updated `prometheus.yml`:
+
+```yaml
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: "astra-backend"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["backend:8000"]
+```
+
+Then restarted Prometheus using the service name:
+
+```bash
+docker compose restart prometheus
+```
+
+### Why this solved it
+
+Instead of scraping every 5 seconds with a tight timeout, Prometheus now gives the backend more time.
+
+This is more realistic for a local GenAI app.
+
+---
+
+## 6. Restart command failed: `no such service: astra-prometheus`
+
+### Error
+
+Command used:
+
+```bash
+docker compose restart astra-prometheus
+```
+
+Output:
+
+```text
+no such service: astra-prometheus
+```
+
+### Why this happened
+
+In Docker Compose, there is a difference between:
+
+```text
+service name
+container name
+```
+
+In our `docker-compose.yml`:
+
+```yaml
+prometheus:
+  container_name: astra-prometheus
+```
+
+The service name is:
+
+```text
+prometheus
+```
+
+The container name is:
+
+```text
+astra-prometheus
+```
+
+`docker compose restart` expects the **service name**, not the container name.
+
+### Solution
+
+Use:
+
+```bash
+docker compose restart prometheus
+```
+
+or use raw Docker:
+
+```bash
+docker restart astra-prometheus
+```
+
+### Example
+
+Correct Compose commands:
+
+```bash
+docker compose logs backend
+docker compose restart prometheus
+docker compose ps
+```
+
+Correct raw Docker command:
+
+```bash
+docker restart astra-prometheus
+```
+
+---
+
+## 7. Chat failed because `rag_query_tool` still used `AgentSettings`
+
+### Error
+
+The chat endpoint returned a normal HTTP 200, but the answer said the knowledge source did not contain the required information.
+
+Backend logs showed the real issue:
+
+```text
+Tool rag_query_tool executed with result:
+Error executing tool: 5 validation errors for AgentSettings
+
+DOCUMENTS_DIR
+VECTOR_STORE_DIR
+COLLECTION_NAME
+MODEL_NAME
+MODEL_TEMPERATURE
+Field required
+```
+
+### Problematic code
+
+In `rag_qa_tool.py`, we still had:
+
+```python
+from src.agents.config.agent_settings import AgentSettings
+
+settings = AgentSettings()
+```
+
+inside:
+
+```python
+@tool
+def rag_query_tool(query: str, user_id: str = "default_user") -> dict:
+```
+
+and then:
+
+```python
+collection_name = settings.COLLECTION_NAME
+
+Settings.llm = Groq(
+    model=settings.MODEL_NAME,
+    temperature=settings.MODEL_TEMPERATURE,
+    api_key=settings.GROQ_API_KEY,
+)
+```
+
+### Why this was wrong
+
+We had already moved to user-specific retrieval:
+
+```python
+vector_store_path = Path("data/users") / user_id / "chroma"
+```
+
+So the RAG tool did not need old global values:
+
+```text
+DOCUMENTS_DIR
+VECTOR_STORE_DIR
+```
+
+But `AgentSettings()` still required them, causing the tool to fail inside CrewAI.
+
+### Solution
+
+We removed `AgentSettings` from `rag_qa_tool.py`.
+
+Instead of this:
+
+```python
+settings = AgentSettings()
+collection_name = settings.COLLECTION_NAME
+```
+
+we used constants and direct environment variables:
+
+```python
+DEFAULT_USER_ID = "default_user"
+BASE_DATA_DIR = Path("data/users")
+COLLECTION_NAME = "document_collection"
+
+DEFAULT_MODEL_NAME = "llama-3.3-70b-versatile"
+DEFAULT_MODEL_TEMPERATURE = 0.2
+```
+
+For Groq config:
+
+```python
+groq_api_key = os.getenv("GROQ_API_KEY")
+model_name = os.getenv("MODEL_NAME", DEFAULT_MODEL_NAME)
+model_temperature = float(os.getenv("MODEL_TEMPERATURE", "0.2"))
+```
+
+Then:
+
+```python
+Settings.llm = Groq(
+    model=model_name,
+    temperature=model_temperature,
+    api_key=groq_api_key,
+)
+```
+
+### Why this solved it
+
+The RAG tool now only depends on what it actually needs:
+
+```text
+user_id
+data/users/{user_id}/chroma
+document_collection
+GROQ_API_KEY
+MODEL_NAME
+MODEL_TEMPERATURE
+```
+
+It no longer requires old global ingestion paths.
+
+### Example
+
+For user `harsh`, chat retrieval now uses:
+
+```text
+data/users/harsh/chroma
+```
+
+and collection:
+
+```text
+document_collection
+```
+
+not old global settings.
+
+---
+
+## 8. Frontend chat called `localhost:8000` from inside Docker
+
+### Error shown in Streamlit UI
+
+```text
+HTTPConnectionPool(host='localhost', port=8000):
+Max retries exceeded with url: /chat/answer
+Caused by NewConnectionError:
+Failed to establish a new connection: [Errno 111] Connection refused
+```
+
+### What this meant
+
+The frontend container was trying to call:
+
+```text
+http://localhost:8000/chat/answer
+```
+
+But inside the frontend container, `localhost` means:
+
+```text
+the frontend container itself
+```
+
+The backend is a separate container. It must be reached using Docker Compose service name:
+
+```text
+http://backend:8000
+```
+
+### Confusing clue
+
+Frontend logs showed:
+
+```text
+BACKEND_BASE_URL=http://backend:8000
+```
+
+So the Docker environment was correct.
+
+But the app still called:
+
+```text
+localhost:8000
+```
+
+That meant the problem was in the frontend config code.
+
+### Problematic code
+
+In `frontend_config.py`, we had:
+
+```python
+BACKEND_BASE_URL: str = os.getenv(
+    "BACKEND_BASE_URL",
+    "http://localhost:8000",
+)
+
+CHAT_ENDPOINT_URL: str = f"{BACKEND_BASE_URL}/chat/answer"
+```
+
+### Why this was wrong
+
+The derived endpoint fields were class-level values.
+
+So fields like:
+
+```python
+CHAT_ENDPOINT_URL
+DOCUMENT_UPLOAD_URL
+QUIZ_GENERATE_URL
+```
+
+could be frozen too early with:
+
+```text
+http://localhost:8000
+```
+
+### Solution
+
+We converted endpoint URLs into `@property` methods.
+
+Updated pattern:
+
+```python
+class Settings(BaseSettings):
+    BACKEND_BASE_URL: str = os.getenv(
+        "BACKEND_BASE_URL",
+        "http://localhost:8000",
+    )
+
+    @property
+    def CHAT_ENDPOINT_URL(self) -> str:
+        return f"{self.BACKEND_BASE_URL}/chat/answer"
+```
+
+Same for:
+
+```python
+DOCUMENT_UPLOAD_URL
+DOCUMENT_LIST_URL
+DOCUMENT_STORAGE_URL
+DOCUMENT_DELETE_BASE_URL
+QUIZ_GENERATE_URL
+QUIZ_ATTEMPTS_URL
+QUIZ_SUMMARY_URL
+```
+
+### Why this solved it
+
+Now endpoint URLs are built from the actual runtime value of:
+
+```python
+self.BACKEND_BASE_URL
+```
+
+So in Docker:
+
+```text
+BACKEND_BASE_URL=http://backend:8000
+```
+
+produces:
+
+```text
+http://backend:8000/chat/answer
+```
+
+Locally, without Docker, it still defaults to:
+
+```text
+http://localhost:8000/chat/answer
+```
+
+### Verification command
+
+We used:
+
+```bash
+docker compose exec frontend python -c "from src.frontend.config.frontend_config import Settings; s=Settings(); print(s.BACKEND_BASE_URL); print(s.CHAT_ENDPOINT_URL)"
+```
+
+Expected output:
+
+```text
+http://backend:8000
+http://backend:8000/chat/answer
+```
+
+---
+
+## 9. `.env.docker` versus explicit Compose environment variables
+
+### Issue
+
+Earlier, the Docker command used:
+
+```bash
+--env-file .env.docker
+```
+
+But the new `docker-compose.yml` initially passed only a few variables manually:
+
+```yaml
+OPENAI_API_KEY
+OPENAI_MODEL
+GROQ_API_KEY
+```
+
+So some settings were missing in Docker.
+
+### Why this happened
+
+`docker compose` does not automatically pass all `.env.docker` variables into containers unless we specify:
+
+```yaml
+env_file:
+  - .env.docker
+```
+
+### Solution
+
+We added:
+
+```yaml
+env_file:
+  - .env.docker
+```
+
+to backend and frontend services.
+
+Final backend environment pattern:
+
+```yaml
+backend:
+  env_file:
+    - .env.docker
+  environment:
+    MODE: backend
+    PYTHONPATH: /app
+    OPENAI_API_KEY: ${OPENAI_API_KEY}
+    OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+    GROQ_API_KEY: ${GROQ_API_KEY}
+    MODEL_NAME: ${MODEL_NAME:-llama-3.3-70b-versatile}
+    MODEL_TEMPERATURE: ${MODEL_TEMPERATURE:-0.2}
+    CREWAI_TRACING_ENABLED: "false"
+```
+
+Frontend:
+
+```yaml
+frontend:
+  env_file:
+    - .env.docker
+  environment:
+    MODE: frontend
+    PYTHONPATH: /app
+    BACKEND_BASE_URL: http://backend:8000
+```
+
+### Important note
+
+Long-term, we removed dependency on these old variables for user-specific flows:
+
+```text
+DOCUMENTS_DIR
+VECTOR_STORE_DIR
+COLLECTION_NAME
+```
+
+because the app now uses:
+
+```text
+data/users/{user_id}/uploads
+data/users/{user_id}/chroma
+document_collection
+```
+
+---
+
+## 10. Prometheus and Grafana service naming confusion
+
+### Issue
+
+Inside Docker Compose, service-to-service communication must use service names.
+
+Correct:
+
+```text
+Prometheus → backend:8000
+Grafana → prometheus:9090
+Frontend → backend:8000
+```
+
+Incorrect from inside containers:
+
+```text
+localhost:8000
+localhost:9090
+```
+
+### Why
+
+Each container has its own localhost.
+
+So:
+
+```text
+localhost inside frontend = frontend container
+localhost inside Grafana = Grafana container
+localhost inside Prometheus = Prometheus container
+```
+
+### Correct config examples
+
+Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: "astra-backend"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["backend:8000"]
+```
+
+Grafana data source URL:
+
+```text
+http://prometheus:9090
+```
+
+Frontend backend URL:
+
+```text
+http://backend:8000
+```
+
+Host browser URLs are different:
+
+```text
+Streamlit frontend: http://localhost:8501
+FastAPI backend:   http://localhost:8000
+Prometheus:        http://localhost:9090
+Grafana:           http://localhost:3000
+```
+
+---
+
+# Final Working Architecture
+
+```text
+Browser
+  ↓
+http://localhost:8501
+  ↓
+astra-frontend container
+  ↓ BACKEND_BASE_URL=http://backend:8000
+astra-backend container
+  ↓ exposes /metrics
+astra-prometheus container
+  ↓ datasource URL http://prometheus:9090
+astra-grafana container
+```
+
+Backend data path:
+
+```text
+/app/data/users/{user_id}/uploads
+/app/data/users/{user_id}/chroma
+```
+
+Mounted from host:
+
+```yaml
+volumes:
+  - ./data:/app/data
+```
+
+---
+
+# Final Troubleshooting Checklist
+
+When something breaks in this Docker stack, check in this order:
+
+```bash
+docker compose ps -a
+```
+
+If a container exited:
+
+```bash
+docker compose logs <service>
+```
+
+For backend:
+
+```bash
+docker compose logs backend
+```
+
+For frontend:
+
+```bash
+docker compose logs frontend
+```
+
+Check backend from host:
+
+```bash
+curl http://localhost:8000/metrics
+```
+
+Check backend from frontend container:
+
+```bash
+docker compose exec frontend python -c "import requests; print(requests.get('http://backend:8000/metrics').status_code)"
+```
+
+Check Prometheus target:
+
+```text
+http://localhost:9090/targets
+```
+
+Check Grafana data source:
+
+```text
+http://prometheus:9090
+```
+
+---
+
+# Recommended Commit Message
+
+```bash
+git add .
+git commit -m "fix: resolve Docker networking and environment configuration issues"
+```
+
+Optional detailed commit:
+
+```bash
+git commit -m "fix: resolve Docker networking and environment configuration issues" \
+-m "Fixed Docker Compose startup issues by deferring legacy settings loading, removing AgentSettings dependency from quiz and RAG retrieval paths, binding FastAPI to 0.0.0.0, using Docker service names for inter-container communication, loading .env.docker, and making frontend API endpoint URLs runtime-configurable."
+```

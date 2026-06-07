@@ -5,6 +5,7 @@ WORKDIR /app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 ENV UV_LINK_MODE=copy
+ENV PATH="/app/.venv/bin:$PATH"
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -18,6 +19,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 
 COPY src ./src
+COPY .streamlit ./.streamlit
 COPY run_astra.sh ./run_astra.sh
 
 RUN chmod +x run_astra.sh
