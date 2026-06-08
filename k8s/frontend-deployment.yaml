@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: astra-frontend
+  namespace: astra-rag
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: astra-frontend
+  template:
+    metadata:
+      labels:
+        app: astra-frontend
+    spec:
+      containers:
+        - name: astra-frontend
+          image: hbhangale3/astra-rag:latest
+          imagePullPolicy: Always
+          command: ["bash", "run_astra.sh"]
+          ports:
+            - containerPort: 8501
+          env:
+            - name: MODE
+              value: "frontend"
+
+            - name: PYTHONPATH
+              value: "/app"
+
+            - name: BACKEND_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: astra-config
+                  key: BACKEND_BASE_URL
+
+          volumeMounts:
+            - name: astra-data
+              mountPath: /app/data
+
+      volumes:
+        - name: astra-data
+          persistentVolumeClaim:
+            claimName: astra-data-pvc

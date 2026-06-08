@@ -15,3 +15,5 @@ wheels/
 Docs/
 vectorDB/
 data/
+# Kubernetes local secrets
+k8s/astra-secret.yaml
