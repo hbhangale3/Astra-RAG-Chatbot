@@ -6,8 +6,6 @@ pipeline {
         DOCKERHUB_CREDENTIALS = "dockerhub-token"
         GITHUB_CREDENTIALS = "github-token"
         GIT_REPO_URL = "github.com/hbhangale3/Astra-RAG-Chatbot.git"
-        SHOULD_BUILD_IMAGE = "false"
-        IMAGE_TAG = ""
     }
 
     stages {
@@ -31,8 +29,7 @@ pipeline {
                     if (lastCommitMessage.contains("[skip ci]")) {
                         echo "Commit contains [skip ci]. Skipping pipeline."
                         currentBuild.result = "SUCCESS"
-                        env.SHOULD_BUILD_IMAGE = "false"
-                        error("Stopping pipeline because commit contains [skip ci].")
+                        return
                     }
                 }
             }
@@ -40,53 +37,37 @@ pipeline {
 
         stage("Detect Changes") {
             steps {
-                script {
-                    def changedFilesOutput = sh(
-                        script: '''
-                            if git rev-parse HEAD~1 >/dev/null 2>&1; then
-                                git diff --name-only HEAD~1 HEAD
-                            else
-                                git ls-files
-                            fi
-                        ''',
-                        returnStdout: true
-                    ).trim()
+                sh '''
+                    set -e
+
+                    echo "Detecting changed files..."
+
+                    if git rev-parse HEAD~1 >/dev/null 2>&1; then
+                        git diff --name-only HEAD~1 HEAD > changed_files.txt
+                    else
+                        git ls-files > changed_files.txt
+                    fi
 
                     echo "Changed files:"
-                    echo changedFilesOutput
+                    cat changed_files.txt
 
-                    def changedFiles = changedFilesOutput ? changedFilesOutput.split("\\n") : []
+                    echo "false" > .should_build_image
 
-                    def dockerRelevantChange = changedFiles.any { file ->
-                        file == "Dockerfile" ||
-                        file == "run_astra.sh" ||
-                        file == "pyproject.toml" ||
-                        file == "uv.lock" ||
-                        file == "Jenkinsfile" ||
-                        file.startsWith("src/") ||
-                        file.startsWith(".streamlit/")
-                    }
-
-                    if (dockerRelevantChange) {
-                        env.SHOULD_BUILD_IMAGE = "true"
-                        env.IMAGE_TAG = sh(
-                            script: "git rev-parse --short=8 HEAD",
-                            returnStdout: true
-                        ).trim()
-
+                    if grep -qE "^(Dockerfile|run_astra.sh|pyproject.toml|uv.lock)$|^src/|^\\.streamlit/" changed_files.txt; then
+                        echo "true" > .should_build_image
+                        git rev-parse --short=8 HEAD > .image_tag
                         echo "Docker-relevant change detected."
-                        echo "Image tag will be: ${env.IMAGE_TAG}"
-                    } else {
-                        env.SHOULD_BUILD_IMAGE = "false"
+                        echo "Image tag will be: $(cat .image_tag)"
+                    else
                         echo "No Docker-relevant changes detected. Skipping Docker build."
-                    }
-                }
+                    fi
+                '''
             }
         }
 
         stage("Verify Docker") {
             when {
-                expression { env.SHOULD_BUILD_IMAGE == "true" }
+                expression { fileExists(".should_build_image") && readFile(".should_build_image").trim() == "true" }
             }
             steps {
                 echo "Verifying Docker inside Jenkins..."
@@ -97,18 +78,23 @@ pipeline {
 
         stage("Build Docker Image") {
             when {
-                expression { env.SHOULD_BUILD_IMAGE == "true" }
+                expression { fileExists(".should_build_image") && readFile(".should_build_image").trim() == "true" }
             }
             steps {
-                echo "Building Docker image ${DOCKER_IMAGE}:${IMAGE_TAG}..."
-                sh "docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} ."
-                sh "docker tag ${DOCKER_IMAGE}:${IMAGE_TAG} ${DOCKER_IMAGE}:latest"
+                sh '''
+                    set -e
+                    IMAGE_TAG=$(cat .image_tag)
+
+                    echo "Building Docker image ${DOCKER_IMAGE}:${IMAGE_TAG}..."
+                    docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} .
+                    docker tag ${DOCKER_IMAGE}:${IMAGE_TAG} ${DOCKER_IMAGE}:latest
+                '''
             }
         }
 
         stage("Login to DockerHub") {
             when {
-                expression { env.SHOULD_BUILD_IMAGE == "true" }
+                expression { fileExists(".should_build_image") && readFile(".should_build_image").trim() == "true" }
             }
             steps {
                 echo "Logging in to DockerHub..."
@@ -117,29 +103,42 @@ pipeline {
                     usernameVariable: "DOCKERHUB_USERNAME",
                     passwordVariable: "DOCKERHUB_TOKEN"
                 )]) {
-                    sh "echo $DOCKERHUB_TOKEN | docker login -u $DOCKERHUB_USERNAME --password-stdin"
+                    sh '''
+                        echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+                    '''
                 }
             }
         }
 
         stage("Push Docker Image") {
             when {
-                expression { env.SHOULD_BUILD_IMAGE == "true" }
+                expression { fileExists(".should_build_image") && readFile(".should_build_image").trim() == "true" }
             }
             steps {
-                echo "Pushing Docker image..."
-                sh "docker push ${DOCKER_IMAGE}:${IMAGE_TAG}"
-                sh "docker push ${DOCKER_IMAGE}:latest"
+                sh '''
+                    set -e
+                    IMAGE_TAG=$(cat .image_tag)
+
+                    echo "Pushing Docker image ${DOCKER_IMAGE}:${IMAGE_TAG}..."
+                    docker push ${DOCKER_IMAGE}:${IMAGE_TAG}
+
+                    echo "Pushing Docker image ${DOCKER_IMAGE}:latest..."
+                    docker push ${DOCKER_IMAGE}:latest
+                '''
             }
         }
 
         stage("Update Kubernetes Manifests") {
             when {
-                expression { env.SHOULD_BUILD_IMAGE == "true" }
+                expression { fileExists(".should_build_image") && readFile(".should_build_image").trim() == "true" }
             }
             steps {
-                echo "Updating Kubernetes manifests with image tag ${IMAGE_TAG}..."
                 sh '''
+                    set -e
+                    IMAGE_TAG=$(cat .image_tag)
+
+                    echo "Updating Kubernetes manifests with image tag ${IMAGE_TAG}..."
+
                     sed -i "s|image: hbhangale3/astra-rag:.*|image: hbhangale3/astra-rag:${IMAGE_TAG}|g" k8s/backend-deployment.yaml
                     sed -i "s|image: hbhangale3/astra-rag:.*|image: hbhangale3/astra-rag:${IMAGE_TAG}|g" k8s/frontend-deployment.yaml
 
@@ -151,7 +150,7 @@ pipeline {
 
         stage("Commit Manifest Update") {
             when {
-                expression { env.SHOULD_BUILD_IMAGE == "true" }
+                expression { fileExists(".should_build_image") && readFile(".should_build_image").trim() == "true" }
             }
             steps {
                 echo "Committing updated manifests back to GitHub..."
@@ -161,6 +160,9 @@ pipeline {
                     passwordVariable: "GITHUB_TOKEN"
                 )]) {
                     sh '''
+                        set -e
+                        IMAGE_TAG=$(cat .image_tag)
+
                         git config user.email "jenkins@astra-rag.local"
                         git config user.name "Jenkins CI"
 
