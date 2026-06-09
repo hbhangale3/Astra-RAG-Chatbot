@@ -220,7 +220,9 @@ data:
                     "orientation": "auto",
                     "percentChangeColorMode": "standard",
                     "reduceOptions": {
-                      "calcs": ["lastNotNull"],
+                      "calcs": [
+                        "lastNotNull"
+                      ],
                       "fields": "",
                       "values": false
                     },
@@ -309,7 +311,9 @@ data:
                     "minVizWidth": 75,
                     "orientation": "auto",
                     "reduceOptions": {
-                      "calcs": ["lastNotNull"],
+                      "calcs": [
+                        "lastNotNull"
+                      ],
                       "fields": "",
                       "values": false
                     },
@@ -523,7 +527,9 @@ data:
                     "namePlacement": "auto",
                     "orientation": "horizontal",
                     "reduceOptions": {
-                      "calcs": ["lastNotNull"],
+                      "calcs": [
+                        "lastNotNull"
+                      ],
                       "fields": "",
                       "values": false
                     },
@@ -694,7 +700,7 @@ data:
                           "group": "prometheus",
                           "version": "v0",
                           "datasource": {
-                            "name": "cfofwai4r2nswb"
+                            "name": "prometheus"
                           },
                           "spec": {
                             "editorMode": "code",
