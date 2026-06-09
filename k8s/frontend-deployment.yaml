@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: astra-frontend
-          image: hbhangale3/astra-rag:latest
+          image: hbhangale3/astra-rag:9c939f2a
           imagePullPolicy: Always
           command: ["bash", "run_astra.sh"]
           ports:
