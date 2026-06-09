@@ -70,7 +70,7 @@ The application is built around the idea of **source-grounded learning**. Instea
 
 The landing page introduces AstraRAG as an Agentic RAG-powered Study Buddy application.
 
-![AstraRAG Home](docs/images/studyBuddy_home_screenshot.png)
+![AstraRAG Home](Docs/images/studyBuddy_home_screenshot.png)
 
 ---
 
@@ -78,7 +78,7 @@ The landing page introduces AstraRAG as an Agentic RAG-powered Study Buddy appli
 
 Users can log in with a username and password. The current implementation supports user-specific document storage and quiz history.
 
-![AstraRAG Login](docs/images/studyBuddy_login_screenshot.png)
+![AstraRAG Login](Docs/images/studyBuddy_login_screenshot.png)
 
 ---
 
@@ -86,7 +86,7 @@ Users can log in with a username and password. The current implementation suppor
 
 Users can upload study material. Uploaded documents are stored persistently and ingested into ChromaDB for retrieval.
 
-![Upload Documents](docs/images/studyBuddy_upload_doc_screenshot.png)
+![Upload Documents](Docs/images/studyBuddy_upload_doc_screenshot.png)
 
 ---
 
@@ -94,7 +94,7 @@ Users can upload study material. Uploaded documents are stored persistently and 
 
 The chat interface allows users to ask questions about uploaded documents. Answers are generated using retrieved document context and include source attribution.
 
-![Chat With Notes](docs/images/studyBuddy_chat_screenshot.png)
+![Chat With Notes](Docs/images/studyBuddy_chat_screenshot.png)
 
 ---
 
@@ -102,7 +102,7 @@ The chat interface allows users to ask questions about uploaded documents. Answe
 
 Users can generate quizzes from uploaded study material by specifying a topic, number of questions, difficulty, and question type.
 
-![Generate Quiz Form](docs/images/studyBuddy_generateQuiz1_screenshot.png)
+![Generate Quiz Form](Docs/images/studyBuddy_generateQuiz1_screenshot.png)
 
 ---
 
@@ -110,7 +110,7 @@ Users can generate quizzes from uploaded study material by specifying a topic, n
 
 Generated questions are displayed as multiple-choice questions. Users can select answers and submit the quiz.
 
-![Quiz Attempt](docs/images/studyBuddy_generateQuiz2_screenshot.png)
+![Quiz Attempt](Docs/images/studyBuddy_generateQuiz2_screenshot.png)
 
 ---
 
@@ -118,9 +118,9 @@ Generated questions are displayed as multiple-choice questions. Users can select
 
 After submission, the application shows correctness, explanations, sources, score, and percentage.
 
-![Quiz Results Part 1](docs/images/studyBuddy_generateQuiz3_screenshot.png)
+![Quiz Results Part 1](Docs/images/studyBuddy_generateQuiz3_screenshot.png)
 
-![Quiz Results Part 2](docs/images/studyBuddy_generateQuiz4_screenshot.png)
+![Quiz Results Part 2](Docs/images/studyBuddy_generateQuiz4_screenshot.png)
 
 ---
 
@@ -128,7 +128,7 @@ After submission, the application shows correctness, explanations, sources, scor
 
 The dashboard tracks uploaded documents, storage usage, quiz attempts, average score, best score, and recent quiz history.
 
-![Study Buddy Dashboard](docs/images/studyBuddy_dashboard_screenshot.png)
+![Study Buddy Dashboard](Docs/images/studyBuddy_dashboard_screenshot.png)
 
 ---
 
