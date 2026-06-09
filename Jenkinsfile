@@ -3,8 +3,11 @@ pipeline {
 
     environment {
         DOCKER_IMAGE = "hbhangale3/astra-rag"
-        DOCKER_TAG = "latest"
         DOCKERHUB_CREDENTIALS = "dockerhub-token"
+        GITHUB_CREDENTIALS = "github-token"
+        GIT_REPO_URL = "github.com/hbhangale3/Astra-RAG-Chatbot.git"
+        SHOULD_BUILD_IMAGE = "false"
+        IMAGE_TAG = ""
     }
 
     stages {
@@ -15,7 +18,76 @@ pipeline {
             }
         }
 
+        stage("Skip CI Check") {
+            steps {
+                script {
+                    def lastCommitMessage = sh(
+                        script: "git log -1 --pretty=%B",
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Last commit message: ${lastCommitMessage}"
+
+                    if (lastCommitMessage.contains("[skip ci]")) {
+                        echo "Commit contains [skip ci]. Skipping pipeline."
+                        currentBuild.result = "SUCCESS"
+                        env.SHOULD_BUILD_IMAGE = "false"
+                        error("Stopping pipeline because commit contains [skip ci].")
+                    }
+                }
+            }
+        }
+
+        stage("Detect Changes") {
+            steps {
+                script {
+                    def changedFilesOutput = sh(
+                        script: '''
+                            if git rev-parse HEAD~1 >/dev/null 2>&1; then
+                                git diff --name-only HEAD~1 HEAD
+                            else
+                                git ls-files
+                            fi
+                        ''',
+                        returnStdout: true
+                    ).trim()
+
+                    echo "Changed files:"
+                    echo changedFilesOutput
+
+                    def changedFiles = changedFilesOutput ? changedFilesOutput.split("\\n") : []
+
+                    def dockerRelevantChange = changedFiles.any { file ->
+                        file == "Dockerfile" ||
+                        file == "run_astra.sh" ||
+                        file == "pyproject.toml" ||
+                        file == "uv.lock" ||
+                        file == "Jenkinsfile" ||
+                        file.startsWith("src/") ||
+                        file.startsWith(".streamlit/")
+                    }
+
+                    if (dockerRelevantChange) {
+                        env.SHOULD_BUILD_IMAGE = "true"
+                        env.IMAGE_TAG = sh(
+                            script: "git rev-parse --short=8 HEAD",
+                            returnStdout: true
+                        ).trim()
+
+                        echo "Docker-relevant change detected."
+                        echo "Image tag will be: ${env.IMAGE_TAG}"
+                    } else {
+                        env.SHOULD_BUILD_IMAGE = "false"
+                        echo "No Docker-relevant changes detected. Skipping Docker build."
+                    }
+                }
+            }
+        }
+
         stage("Verify Docker") {
+            when {
+                expression { env.SHOULD_BUILD_IMAGE == "true" }
+            }
             steps {
                 echo "Verifying Docker inside Jenkins..."
                 sh "docker --version"
@@ -24,13 +96,20 @@ pipeline {
         }
 
         stage("Build Docker Image") {
+            when {
+                expression { env.SHOULD_BUILD_IMAGE == "true" }
+            }
             steps {
-                echo "Building Docker image..."
-                sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                echo "Building Docker image ${DOCKER_IMAGE}:${IMAGE_TAG}..."
+                sh "docker build -t ${DOCKER_IMAGE}:${IMAGE_TAG} ."
+                sh "docker tag ${DOCKER_IMAGE}:${IMAGE_TAG} ${DOCKER_IMAGE}:latest"
             }
         }
 
         stage("Login to DockerHub") {
+            when {
+                expression { env.SHOULD_BUILD_IMAGE == "true" }
+            }
             steps {
                 echo "Logging in to DockerHub..."
                 withCredentials([usernamePassword(
@@ -44,9 +123,57 @@ pipeline {
         }
 
         stage("Push Docker Image") {
+            when {
+                expression { env.SHOULD_BUILD_IMAGE == "true" }
+            }
             steps {
-                echo "Pushing Docker image to DockerHub..."
-                sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
+                echo "Pushing Docker image..."
+                sh "docker push ${DOCKER_IMAGE}:${IMAGE_TAG}"
+                sh "docker push ${DOCKER_IMAGE}:latest"
+            }
+        }
+
+        stage("Update Kubernetes Manifests") {
+            when {
+                expression { env.SHOULD_BUILD_IMAGE == "true" }
+            }
+            steps {
+                echo "Updating Kubernetes manifests with image tag ${IMAGE_TAG}..."
+                sh '''
+                    sed -i "s|image: hbhangale3/astra-rag:.*|image: hbhangale3/astra-rag:${IMAGE_TAG}|g" k8s/backend-deployment.yaml
+                    sed -i "s|image: hbhangale3/astra-rag:.*|image: hbhangale3/astra-rag:${IMAGE_TAG}|g" k8s/frontend-deployment.yaml
+
+                    echo "Updated image references:"
+                    grep -R "image: hbhangale3/astra-rag" -n k8s
+                '''
+            }
+        }
+
+        stage("Commit Manifest Update") {
+            when {
+                expression { env.SHOULD_BUILD_IMAGE == "true" }
+            }
+            steps {
+                echo "Committing updated manifests back to GitHub..."
+                withCredentials([usernamePassword(
+                    credentialsId: "${GITHUB_CREDENTIALS}",
+                    usernameVariable: "GITHUB_USERNAME",
+                    passwordVariable: "GITHUB_TOKEN"
+                )]) {
+                    sh '''
+                        git config user.email "jenkins@astra-rag.local"
+                        git config user.name "Jenkins CI"
+
+                        git add k8s/backend-deployment.yaml k8s/frontend-deployment.yaml
+
+                        if git diff --cached --quiet; then
+                            echo "No manifest changes to commit."
+                        else
+                            git commit -m "ci: update image tag to ${IMAGE_TAG} [skip ci]"
+                            git push https://${GITHUB_USERNAME}:${GITHUB_TOKEN}@${GIT_REPO_URL} HEAD:main
+                        fi
+                    '''
+                }
             }
         }
     }
